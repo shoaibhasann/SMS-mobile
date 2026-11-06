@@ -6,11 +6,14 @@ Separate React Native application for verified Guardian and Student accounts. Bu
 
 - Email/password sign-in against the existing Supabase project; no automatic signup, guardian linking or staff access.
 - Server-checked active school/family roles, linked-child selection, read-only retained attendance and refresh/pagination.
-- Existing family Notifications with All/Unread, independent saved read state, mark one/all and bounded older history.
+- Existing family Notifications with All/Unread, independent saved read state, mark one/all, older history and native result/leave detail targets.
+- Learning: current-session published homework, private PDF/JPG/PNG upload (10 MB), Student submit/update and Teacher grade/feedback reload; Guardians read only their linked child’s submission.
+- Published single-assessment results with history paging/latest revisions, and family leave submission/history/independent school decisions.
+- Unconfirmed homework/leave mutations retain an encrypted, account/role/child-scoped exact retry intent across app restarts; school records are not cached for offline browsing.
 - Native Android Firebase Installation ID registration with explicit phone permission, versioned preference enable, private installation proof, remote revoke compatibility, logout/account-switch cleanup and a fixed inbox-only push destination.
 - Encrypted native session storage, no saved child/attendance/inbox cache, stale-request cancellation and session-bound API clients.
 
-Native homework, term/results and leave detail/submission screens, Hindi translations, phone OTP login and iOS push are later app slices. Result/leave notification details currently open the fixed school website and require a separate verified web sign-in. App registration does not prove provider acceptance or phone display.
+Term report cards, past-session homework history, original attachment downloads, Hindi translations, phone OTP login and iOS push remain later app slices. Homework uploads use private Storage; authenticated original downloads remain on the school website. App registration does not prove provider acceptance or phone display.
 
 ## Run locally
 
@@ -38,7 +41,7 @@ npx expo-doctor
 npx expo export --platform android
 ```
 
-Tests cover the family data/notification wire contracts, account boundaries, encrypted session storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [school-management-mobile repository](https://github.com/shoaibhasann/school-management-mobile). App-store release/signing is not configured.
+Tests cover homework/results/leave wire contracts, private upload validation, exact persisted mutation retries, family notification state, account boundaries, encrypted storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [school-management-mobile repository](https://github.com/shoaibhasann/school-management-mobile). App-store release/signing is not configured.
 
 ## Push activation boundary
 

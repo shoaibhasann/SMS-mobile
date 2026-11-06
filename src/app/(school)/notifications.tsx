@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Alert, Linking, View } from 'react-native';
+import { Alert, View } from 'react-native';
 import { Bell, CheckCheck } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../auth/provider';
@@ -40,17 +40,11 @@ export default function Notifications() {
   }
   async function open(row: FamilyNotification) {
     if (!alive.current) return;
-    if (row.kind === 'absence') {
-      if (!family.children.some(child => child.id === row.student_id)) { setError('Child access changed. Refresh school access before opening this update.'); return; }
-      family.select(row.student_id); router.push('/(school)/attendance'); return;
-    }
-    // The native report/leave detail screens follow next; the website authenticates separately.
-    const params = new URLSearchParams({ child: row.student_id });
-    if (role === 'parent') params.set('view', 'guardian');
-    if (row.kind === 'result_published') params.set('assessment', row.assessment_id!);
-    else params.set('request', row.source_id);
-    const path = row.kind === 'result_published' ? 'results' : 'student-leave';
-    await Linking.openURL(`https://kids-corner-erp-frontend.vercel.app/modules/${path}?${params}`).catch(() => { if (alive.current) setError('The school website could not be opened.'); });
+    if (!family.children.some(child => child.id === row.student_id)) { setError('Child access changed. Refresh school access before opening this update.'); return; }
+    family.select(row.student_id);
+    if (row.kind === 'absence') router.push('/(school)/attendance');
+    else if (row.kind === 'result_published') router.push({ pathname: '/(school)/results', params: { child: row.student_id, assessment: row.assessment_id! } });
+    else router.push({ pathname: '/(school)/leave', params: { child: row.student_id, request: row.source_id } });
   }
   return <Screen><Title title="School updates" subtitle="Attendance, published results and leave decisions. Read status belongs to your account." />
     <View style={{ flexDirection: 'row', gap: 10 }}><View style={{ flex: 1 }}><Button label="All" secondary={unread} onPress={() => { setUnread(false); setCursor(null); }} /></View><View style={{ flex: 1 }}><Button label="Unread" secondary={!unread} onPress={() => { setUnread(true); setCursor(null); }} /></View></View>
@@ -62,13 +56,13 @@ export default function Notifications() {
       {inbox.data.notifications.map(row => <Card key={`${row.kind}:${row.id}`}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: p.primary, fontSize: 12, fontWeight: '700' }}>{row.kind === 'absence' ? 'ATTENDANCE' : row.kind === 'result_published' ? 'RESULT' : 'LEAVE'}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.read_at ? 'Read' : 'Unread'}</Text></View>
         <Text accessibilityRole="header" style={{ fontSize: 17, lineHeight: 26, fontWeight: '600' }}>{row.title}</Text><Text>{row.student_name}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.event_date}</Text>
-        <Button label={row.kind === 'absence' ? 'View attendance' : 'Open securely on school website'} secondary onPress={() => void open(row)} />
+        <Button label={row.kind === 'absence' ? 'View attendance' : row.kind === 'result_published' ? 'View published result' : 'View leave decision'} secondary onPress={() => void open(row)} />
         {!row.read_at && <Button label="Mark as read" secondary disabled={busy} onPress={() => void mark(row)} />}
       </Card>)}
       {inbox.data.next_cursor && <Button label="Older updates" secondary onPress={() => setCursor(inbox.data!.next_cursor)} />}
       {cursor && <Button label="Latest updates" secondary onPress={() => setCursor(null)} />}
     </>}
     <Button label="Refresh updates" secondary disabled={busy} onPress={inbox.reload} />
-    <Text style={{ color: p.muted, fontSize: 12 }}>Result and leave details open on the school website in this pilot and require a separate verified web sign-in. Opening an update does not automatically mark it read.</Text>
+    <Text style={{ color: p.muted, fontSize: 12 }}>Details are checked against your current linked-child access. Result links show the latest published revision. Opening an update does not automatically mark it read.</Text>
   </Screen>;
 }
