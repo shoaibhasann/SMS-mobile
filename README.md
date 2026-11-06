@@ -38,7 +38,7 @@ npx expo-doctor
 npx expo export --platform android
 ```
 
-Tests cover the family data/notification wire contracts, account boundaries, encrypted session storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. The new app has no GitHub remote or app-store release configured yet.
+Tests cover the family data/notification wire contracts, account boundaries, encrypted session storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [school-management-mobile repository](https://github.com/shoaibhasann/school-management-mobile). App-store release/signing is not configured.
 
 ## Push activation boundary
 

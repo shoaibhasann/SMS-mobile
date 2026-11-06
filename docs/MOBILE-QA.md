@@ -28,6 +28,8 @@ Use existing private QA credentials; never paste passwords, session tokens, FIDs
 - [ ] M-11: After approved server configuration, create a fresh eligible event. Record job, provider acceptance, real phone display, tap→authenticated inbox and permitted source record separately. Duplicate/expired/revoked jobs must not leak private data.
 - [ ] M-12: Test foreground/background/terminated app, disabled OS permission, FID rotation and notification tap before login. Arbitrary payload URLs must not navigate or execute. Previously accepted neutral OS alerts cannot be recalled retroactively.
 
+Source runtime `8c28b7e` is committed on the private GitHub repository’s `main`; later documentation-only commits preserve the tested runtime bytes.
+
 ## Still blocked before production app distribution
 
 Real FCM sender/scheduler activation, physical Android delivery, iOS/APNs lifecycle, a release signing identity, agreed app-store/privacy materials and founder acceptance. A debug APK needs Metro and is not a Play Store release. Do not advertise the full commercial SMS as complete; see the web repository's `docs/implementation/WEB-REMAINING.md`.
