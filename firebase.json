@@ -1,0 +1,8 @@
+{
+  "react-native": {
+    "messaging_auto_init_enabled": false,
+    "messaging_installation_id_enabled": true,
+    "messaging_android_notification_delegation_enabled": false,
+    "analytics_auto_collection_enabled": false
+  }
+}

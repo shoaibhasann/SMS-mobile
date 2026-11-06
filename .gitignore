@@ -39,3 +39,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Private project configuration and signing
+.env
+.env.*
+!.env.example
+.private/
+google-services.json
+GoogleService-Info.plist
+coverage/
