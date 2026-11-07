@@ -2,6 +2,21 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Optional Guardian gate alerts — 7 November
+
+Parent Updates now exposes per-child Arrival/Exit switches, both OFF for a fresh link. Choices auto-save with an immutable consent UUID and optimistic version. Pending mutations block competing switches/refresh; unknown/conflicting outcomes require refresh. Account/session changes abort stale actions, and revoked links/recovered owners cannot restore earlier consent. These choices affect the school inbox only; Absent alerts remain independent. A missing scan does not automatically mean Absent.
+
+The updated five-kind inbox includes actual gate-event time and Delayed metadata, exact linked-child Attendance targets, independent read state and All/Unread/bulk-read. Four explicit v2 APIs preserve older installed three-kind clients. Turning an option OFF hides retained gate items; enabling later does not backfill already processed scans. Re-enabling within the same link can show retained items/read state.
+
+Final whole checks pass **249 tests/10 files**, TypeScript and warning-free Expo lint; Android Hermes export passes. Six component behavior tests use DOM-mocked React Native primitives, covering default OFF, pending/same-event/cross-child mutation guards, access denial, uncertain-save reconciliation and unmount cancellation. A managed read-only probe runs the exact immutable-session client factory and native data helpers against hosted Supabase: **16 checks pass**, native TOTP session closes, no preference/read writes. This is SDK/component evidence, not installed-binary or physical-device acceptance. The actual gate HTTP/web evidence is tracked in the web repository's `docs/implementation/GATE-ALERTS-QA.md`.
+
+- [ ] NGA-01: In a separately distributed updated native build, enable Arrival only, restart and confirm the saved choice; another Guardian and sibling stay independent.
+- [ ] NGA-02: Receive one eligible synthetic IN/OUT through the gate endpoint, inspect actual event time and open the correct child's retained daily attendance.
+- [ ] NGA-03: Toggle OFF/ON, inspect All/Unread/count/read persistence and test uncertain saves, background/account switching and link revocation.
+- [ ] NGA-04: Confirm Absent while both gate options are OFF, old app compatibility and unchanged old records. Real terminal scans and phone-push display need separate acceptance.
+
+Use the [shared gate-alert checklist](https://kids-corner-erp-frontend.vercel.app/qa/gate-alerts-checklist.md). These boxes remain unchecked until actual native/founder testing. No new APK, EAS update, signed distribution, SMS or FCM activation is included in this source release.
+
 ## Clean native sign-in — 7 November
 
 The login removes the illustrated hero and security badge in favor of a centered SMS wordmark, heading and 400pt maximum-width form. Field labels stay left-aligned; existing Sora, semantic Light/Dark colors, password-manager support, reveal control, recovery link and MFA routing remain. Compact/keyboard/large-text layouts start from the top and scroll; taller screens center the form without fixed heights. Native-device checks for 360pt width, landscape, large system text, both themes and keyboard reachability remain manual.

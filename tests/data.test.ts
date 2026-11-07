@@ -128,14 +128,14 @@ describe('mobile verified family access and retained attendance',()=>{
   });
 });
 
-const alert = (patch:Partial<FamilyNotification>={}):FamilyNotification=>({id:id(10),kind:'absence',student_id:id(3),student_name:'QA child',created_at:stamp,read_at:null,event_date:'2026-11-06',source_id:id(11),status:'absent',title:'Attendance marked absent',assessment_id:null,...patch});
+const alert = (patch:Partial<FamilyNotification>={}):FamilyNotification=>({id:id(10),kind:'absence',student_id:id(3),student_name:'QA child',created_at:stamp,read_at:null,event_date:'2026-11-06',source_id:id(11),status:'absent',title:'Attendance marked absent',assessment_id:null,occurred_at:null,delayed:false,...patch});
 function rpcClient(data:unknown,error:{code:string}|null=null){const abortSignal=vi.fn().mockResolvedValue({data,error});const rpc=vi.fn().mockReturnValue(Object.assign(Promise.resolve({data,error}),{abortSignal}));return {client:{rpc} as unknown as SupabaseClient,rpc,abortSignal};}
 const inbox=(notifications=[alert()])=>({notifications,unread_count:'3',next_cursor:null});
 describe('native shared notification contract',()=>{
   it('keeps server unread filtering, cursor precision, exact limits and AbortSignal',async()=>{
     const next={created_at:stamp,kind:'absence' as const,id:id(10)},saved=rpcClient({...inbox(),next_cursor:next});const signal=new AbortController().signal;
     const result=await loadFamilyNotificationInbox(saved.client,{role:'parent',unreadOnly:true,limit:1},signal);expect(result.next_cursor).toEqual(next);expect(result.unread_count).toBe(3);expect(saved.abortSignal).toHaveBeenCalledWith(signal);
-    expect(saved.rpc).toHaveBeenCalledWith('get_family_notification_inbox',{p_role:'parent',p_unread_only:true,p_limit:1,p_before_created_at:null,p_before_kind:null,p_before_id:null});
+    expect(saved.rpc).toHaveBeenCalledWith('get_family_notification_inbox_v2',{p_role:'parent',p_unread_only:true,p_limit:1,p_before_created_at:null,p_before_kind:null,p_before_id:null});
   });
   it.each([
     {notifications:[alert(),alert()]}, {notifications:[alert({event_date:'2026-02-30'})]}, {notifications:[alert({kind:'result_published',status:'published'})]},
