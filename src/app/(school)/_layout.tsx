@@ -8,6 +8,7 @@ import { FamilyProvider } from '../../ui/family';
 import { usePalette } from '../../ui/theme';
 import { Button, ErrorCard, Screen, Skeleton } from '../../ui/primitives';
 import { attachPushInboxHints } from '../../push';
+import { MfaVerification } from '../../ui/mfa-verification';
 
 function PushHints() {
   const { access, role } = useAuth();
@@ -24,6 +25,7 @@ function PushHints() {
 export default function SchoolLayout() {
   const auth = useAuth(), p = usePalette(), insets = useSafeAreaInsets();
   if (auth.status === 'signedOut') return <Redirect href="/login" />;
+  if (auth.status === 'mfa' && auth.foreground) return <MfaVerification />;
   if (auth.status !== 'ready' || !auth.foreground || !auth.access) return <Screen>{auth.error ? <><ErrorCard message={auth.error} retry={auth.refresh} /><Button label="Sign out" onPress={() => void auth.signOut().catch(() => {})} secondary /></> : <Skeleton />}</Screen>;
   return <FamilyProvider key={`${auth.access.userId}:${auth.role}:${auth.revision}`}><PushHints /><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: p.primary, tabBarInactiveTintColor: p.muted,
     tabBarStyle: { backgroundColor: p.surface, borderTopColor: p.border, height: 64 + Math.max(12, insets.bottom), paddingBottom: Math.max(12, insets.bottom), paddingTop: 8 }, tabBarLabelStyle: { fontFamily: 'Sora', fontSize: 11 } }}>

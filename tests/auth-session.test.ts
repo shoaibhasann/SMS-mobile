@@ -6,6 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSessionGate } from '../src/auth/session-gate';
 import type { FamilyAccess } from '../src/data';
 import { AuthProvider, useAuth } from '../src/auth/provider';
+import type { MfaStatus } from '../src/auth/mfa';
 
 type Session = { access_token: string; user: { id: string } };
 type AuthListener = (event: string, session: Session | null) => void;
@@ -24,6 +25,8 @@ const native = vi.hoisted(() => {
   } };
   return { app, client,
     access: vi.fn<(client: unknown, signal?: AbortSignal) => Promise<FamilyAccess>>(),
+    mfa: vi.fn<(client: unknown, userId: string, signal?: AbortSignal) => Promise<MfaStatus>>(),
+    verify: vi.fn<() => Promise<void>>(),
     bound: vi.fn<(token: string) => SupabaseClient>(),
     cleanup: vi.fn<() => Promise<{ nativeCleared: boolean }>>(),
     disconnect: vi.fn<(owner: unknown) => Promise<{ nativeCleared: boolean; serverRevoked: boolean }>>(),
@@ -36,6 +39,7 @@ const native = vi.hoisted(() => {
 vi.mock('react-native', () => ({ AppState: native.app }));
 vi.mock('../src/auth/client', () => ({ configError: null, schoolClient: () => native.client, familyClient: native.bound }));
 vi.mock('../src/data', () => ({ readFamilyAccess: native.access }));
+vi.mock('../src/auth/mfa', () => ({ readMfaStatus: native.mfa, verifyMfa: native.verify }));
 vi.mock('../src/push', () => ({ cleanupSavedPushOnAuthLoss: native.cleanup, disconnectNativePush: native.disconnect }));
 
 const guardian: FamilyAccess = { userId: 'guardian-a', schoolId: 'school-a', name: 'Guardian A', roles: ['parent', 'student'] };
@@ -50,6 +54,8 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.clearAllMocks(); native.setSession(sessionA); native.app.currentState = 'active';
   native.access.mockReset().mockResolvedValue(guardian);
+  native.mfa.mockReset().mockImplementation(async (_client, userId) => ({ user_id: userId, required: false, allowed: true, action: 'none', current_aal: 'aal1', verified_totp_count: 0 }));
+  native.verify.mockReset().mockResolvedValue(undefined);
   native.bound.mockReset().mockImplementation(token => ({ sessionToken: token }) as unknown as SupabaseClient);
   native.cleanup.mockReset().mockResolvedValue({ nativeCleared: true });
   native.disconnect.mockReset().mockResolvedValue({ nativeCleared: true, serverRevoked: true });
@@ -71,6 +77,12 @@ function deferred<T>() {
 }
 
 describe('Family account transitions', () => {
+  it('allows an authenticator-code retry after failure without reviving old reads', async () => {
+    const gate = createSessionGate(), old = gate.beginRead()!;
+    await expect(gate.run('mfa', async () => { throw new Error('Wrong code.'); })).rejects.toThrow('Wrong code.');
+    const retry = vi.fn(); await gate.run('mfa', retry);
+    expect(retry).toHaveBeenCalledOnce(); expect(old()).toBe(false); expect(gate.blocked).toBe(false);
+  });
   it('discards an old account response even when it arrives after successful logout', async () => {
     const gate = createSessionGate(), response = deferred<string>(), saved: string[] = [];
     const current = gate.beginRead()!;
@@ -142,6 +154,31 @@ describe('Family account transitions', () => {
 });
 
 describe('AuthProvider session and identity boundary', () => {
+  it('requires MFA before any family records load and rechecks after successful verification', async () => {
+    native.mfa.mockResolvedValueOnce({ user_id: guardian.userId, required: true, allowed: false, action: 'challenge', current_aal: 'aal1', verified_totp_count: 1 });
+    await mount(); expect(auth.status).toBe('mfa'); expect(auth.access).toBeNull(); expect(auth.client).toBeNull();
+    expect(native.access).not.toHaveBeenCalled();
+    await act(async () => { await auth.verifyAuthenticator('factor', '123456'); });
+    expect(auth.status).toBe('ready'); expect(native.mfa).toHaveBeenCalledTimes(2);
+    expect(native.verify).toHaveBeenCalledWith(native.client, guardian.userId, 'factor', '123456', expect.any(AbortSignal));
+  });
+  it('keeps a wrong MFA code retryable with family data hidden', async () => {
+    native.mfa.mockResolvedValue({ user_id: guardian.userId, required: true, allowed: false, action: 'challenge', current_aal: 'aal1', verified_totp_count: 1 });
+    await mount(); native.verify.mockRejectedValueOnce(new Error('Wrong code.'));
+    await act(async () => { await expect(auth.verifyAuthenticator('factor', '123456')).rejects.toThrow('Wrong code.'); });
+    expect(auth.status).toBe('mfa'); expect(native.access).not.toHaveBeenCalled();
+    await act(async () => { await auth.signOut(); }); expect(auth.status).toBe('signedOut');
+  });
+  it('finishes native push cleanup when Auth signs out during a pending MFA verification', async () => {
+    native.mfa.mockResolvedValue({ user_id: guardian.userId, required: true, allowed: false, action: 'challenge', current_aal: 'aal1', verified_totp_count: 1 });
+    await mount(); const pending = deferred<void>(); native.verify.mockReturnValueOnce(pending.promise);
+    let verifying!: Promise<void>;
+    act(() => { verifying = auth.verifyAuthenticator('factor', '123456'); });
+    await act(async () => { native.emitAuth('SIGNED_OUT', null); });
+    expect(native.cleanup).not.toHaveBeenCalled(); expect(native.access).not.toHaveBeenCalled();
+    await act(async () => { pending.reject(new Error('Session ended.')); await expect(verifying).rejects.toThrow('Session ended.'); });
+    expect(native.cleanup).toHaveBeenCalledOnce(); expect(auth.status).toBe('signedOut'); expect(auth.client).toBeNull();
+  });
   it('immediately hides access and the bound client while logout waits for the old owner’s push cleanup', async () => {
     await mount(); expect(auth.status).toBe('ready');
     const oldClient = auth.client, cleanup = deferred<{ nativeCleared: boolean; serverRevoked: boolean }>();

@@ -30,3 +30,11 @@ export function familyClient(accessToken: string) {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   });
 }
+
+export function mfaClient(signal?: AbortSignal) {
+  if (configError) throw new Error(configError);
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: `staff-mfa-${Crypto.randomUUID()}` },
+    global: signal ? { fetch: (input, init) => fetch(input, { ...init, signal }) } : undefined,
+  });
+}

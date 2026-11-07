@@ -1,4 +1,4 @@
-type Transition = 'signIn' | 'signOut' | 'role' | 'authLoss';
+type Transition = 'signIn' | 'signOut' | 'role' | 'authLoss' | 'mfa';
 
 export class SessionTransitionError extends Error {
   constructor(readonly code: 'busy' | 'cleanup') {
@@ -26,7 +26,7 @@ export function createSessionGate() {
         blocked = false;
         return value;
       } catch (error) {
-        blocked = transition !== 'signIn';
+        blocked = transition !== 'signIn' && transition !== 'mfa';
         throw error;
       } finally {
         running = false; epoch++;

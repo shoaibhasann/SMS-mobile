@@ -2,6 +2,14 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Staff/account MFA compatibility — 7 November
+
+The app now checks the own-account security bootstrap before reading family profiles, roles or child records. An enrolled family account, or a mixed staff/Guardian account, receives an authenticator-code screen before the family workspace. Verification uses an isolated nonpersistent client bound to the captured owner, refreshes the current primary session without adopting isolated tokens, and rechecks the native-backed database decision. Wrong codes remain retryable; account changes/backgrounding hide protected records and abort verification. Auth loss during a pending verification still completes saved push cleanup.
+
+Native enrollment is intentionally not included. A required account without a factor opens the stable website for its own separate sign-in/setup, with no tokens in the URL; afterward sign out and sign in again on the phone. Pure staff accounts still do not gain family-role access. Web staff policy and role/link rules remain authoritative.
+
+TypeScript, Expo lint and all 217 tests across eight files pass; Android Hermes export passes. Live backend QA proves real native TOTP, lower-assurance denials, pure-family own/linked-child access and exact factor/session revocation. These checks do not establish physical Android/iOS interaction, app distribution or real FCM delivery. Use [the staff MFA checklist](https://kids-corner-erp-frontend.vercel.app/qa/staff-mfa-checklist.md) for device acceptance; MFA-13/14 remain manual.
+
 ## Current phase: native Learning
 
 Learning adds current-session published homework, Student text/private attachment submission, linked Guardian read-only work/feedback, published single-assessment results and family leave history/submission. Result and leave updates open exact native details; an old result alert shows the latest published revision for that assessment. Opening a detail never marks an alert read.

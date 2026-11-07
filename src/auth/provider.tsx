@@ -3,18 +3,20 @@ import { AppState } from 'react-native';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { schoolClient, familyClient, configError } from './client';
 import { createSessionGate, SessionTransitionError } from './session-gate';
+import { readMfaStatus, verifyMfa, type MfaStatus } from './mfa';
 import { readFamilyAccess, type FamilyAccess, type FamilyRole } from '../data';
 import { cleanupSavedPushOnAuthLoss, disconnectNativePush } from '../push';
 
-type AccessState = { status: 'checking' | 'signedOut' | 'ready' | 'error'; access: FamilyAccess | null; client: SupabaseClient | null; error: string | null };
+type AccessState = { status: 'checking' | 'signedOut' | 'ready' | 'error' | 'mfa'; access: FamilyAccess | null; client: SupabaseClient | null; error: string | null; mfa: MfaStatus | null };
 type Owner = { userId: string; schoolId: string; role: FamilyRole; client: SupabaseClient };
 type Auth = AccessState & {
   role: FamilyRole; revision: number; foreground: boolean;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>; chooseRole(role: FamilyRole): Promise<void>; refresh(): void;
+  verifyAuthenticator(factorId: string, code: string): Promise<void>;
 };
 const Context = createContext<Auth | null>(null);
-const empty = (status: AccessState['status'], error: string | null = null): AccessState => ({ status, access: null, client: null, error });
+const empty = (status: AccessState['status'], error: string | null = null): AccessState => ({ status, access: null, client: null, error, mfa: null });
 const disconnect = (owner: Owner) => disconnectNativePush({ client: owner.client, userId: owner.userId, role: owner.role });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -24,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
   const [gate] = useState(createSessionGate);
   const owner = useRef<Owner | null>(null);
+  const mfaWork = useRef<AbortController | null>(null);
   const mounted = useRef(true), signedOut = useRef(false), pushCleared = useRef(false);
   const clear = useCallback(() => {
     gate.invalidate();
@@ -63,10 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const subscription = AppState.addEventListener('change', next => {
       setForeground(next === 'active');
       if (next === 'active') { client.auth.startAutoRefresh(); clear(); }
-      else { gate.invalidate(); client.auth.stopAutoRefresh(); if (!gate.blocked) setState(empty('checking')); }
+      else { mfaWork.current?.abort(); gate.invalidate(); client.auth.stopAutoRefresh(); if (!gate.blocked) setState(empty('checking')); }
     });
     if (AppState.currentState === 'active') client.auth.startAutoRefresh();
-    return () => { mounted.current = false; gate.invalidate(); listener.subscription.unsubscribe(); subscription.remove(); client.auth.stopAutoRefresh(); };
+    return () => { mounted.current = false; mfaWork.current?.abort(); gate.invalidate(); listener.subscription.unsubscribe(); subscription.remove(); client.auth.stopAutoRefresh(); };
   }, [clear, confirmSignedOut, gate]);
 
   useEffect(() => {
@@ -82,6 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!snapshot) { confirmSignedOut(); return; }
       signedOut.current = false; pushCleared.current = false;
       const client = familyClient(snapshot.access_token);
+      const mfa = await readMfaStatus(client, snapshot.user.id, controller.signal);
+      if (!current() || controller.signal.aborted) return;
+      if (!mfa.allowed) { setState({ ...empty('mfa'), mfa }); return; }
       const access = await readFamilyAccess(client, controller.signal);
       if (!current() || controller.signal.aborted) return;
       if (snapshot.user.id !== access.userId) throw new Error('Account identity changed.');
@@ -92,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('Account context changed.');
       }
       owner.current = { userId: access.userId, schoolId: access.schoolId, role: nextRole, client };
-      setRole(nextRole); setState({ status: 'ready', access, client, error: null });
+      setRole(nextRole); setState({ status: 'ready', access, client, error: null, mfa: null });
     })().catch(() => {
       if (mounted.current && !controller.signal.aborted && current()) setState(empty('error',
         'School access could not be verified. Check your connection and retry, or sign out before changing workspaces.'));
@@ -120,6 +126,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!(error instanceof SessionTransitionError) && mounted.current) setState(signedOut.current && pushCleared.current
         ? empty('signedOut') : empty('error', 'Sign-in could not be confirmed. Sign out and retry.'));
       throw error;
+    }
+  }
+  async function verifyAuthenticator(factorId: string, code: string) {
+    if (state.status !== 'mfa' || state.mfa?.action !== 'challenge' || !foreground) throw new Error('Reopen authenticator verification.');
+    const userId = state.mfa.user_id, controller = new AbortController();
+    try {
+      await gate.run('mfa', async () => {
+        mfaWork.current = controller;
+        await verifyMfa(schoolClient(), userId, factorId, code, controller.signal);
+      });
+      clear();
+    } catch (error) {
+      if (controller.signal.aborted && mounted.current) clear();
+      throw error;
+    } finally {
+      if (mfaWork.current === controller) mfaWork.current = null;
+      if (signedOut.current) confirmSignedOut();
     }
   }
   async function signOut() {
@@ -166,6 +189,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }
-  return <Context.Provider value={{ ...state, role, revision, foreground, signIn, signOut, chooseRole, refresh: clear }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ ...state, role, revision, foreground, signIn, signOut, chooseRole, verifyAuthenticator, refresh: clear }}>{children}</Context.Provider>;
 }
 export function useAuth() { const context = useContext(Context); if (!context) throw new Error('Auth provider missing.'); return context; }

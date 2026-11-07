@@ -7,6 +7,7 @@ import { useAuth } from '../auth/provider';
 import { configError } from '../auth/client';
 import { Button, ErrorCard, Screen, Skeleton, Text } from '../ui/primitives';
 import { usePalette } from '../ui/theme';
+import { MfaVerification } from '../ui/mfa-verification';
 
 export default function Login() {
   const auth = useAuth(), p = usePalette(), { height, fontScale } = useWindowDimensions();
@@ -20,6 +21,7 @@ export default function Login() {
     return () => { opened.remove(); closed.remove(); };
   }, []);
   if (auth.status === 'ready') return <Redirect href="/(school)" />;
+  if (auth.status === 'mfa' && auth.foreground) return <MfaVerification />;
   if (auth.status === 'checking') return <Screen><Skeleton /></Screen>;
   if (auth.status === 'error') return <Screen><ErrorCard message={auth.error || 'School access could not be confirmed.'} retry={auth.refresh} />{!configError && <Button label="Sign out" secondary onPress={() => void auth.signOut().catch(() => {})} />}</Screen>;
   async function submit() {
