@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
+import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect } from 'expo-router';
-import { ArrowRight, CircleAlert, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-react-native';
+import { ArrowRight, CircleAlert, Eye, EyeOff, LockKeyhole, Mail } from 'lucide-react-native';
 import { useAuth } from '../auth/provider';
 import { configError } from '../auth/client';
 import { Button, ErrorCard, Screen, Skeleton, Text } from '../ui/primitives';
@@ -40,23 +40,13 @@ export default function Login() {
   const message = error || auth.error || configError;
   return <SafeAreaView style={{ flex: 1, backgroundColor: p.surface }}>
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} contentContainerStyle={[styles.scroll, { justifyContent: keyboard || compact || largeText ? 'flex-start' : 'center', paddingTop: keyboard || compact ? 24 : 40, paddingBottom: keyboard ? 24 : 40 }]} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          <View style={[styles.masthead, { marginBottom: keyboard ? 24 : compact ? 18 : 24 }]}>
-            <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.wordmark}>SMS</Text><Text style={{ color: p.muted, fontSize: 12, lineHeight: 18 }}>School Management System</Text></View>
-            <View accessible accessibilityLabel="School-approved family access" style={[styles.accessBadge, { backgroundColor: p.soft }]}><ShieldCheck size={19} strokeWidth={1.7} color={p.primary} /></View>
+          <View style={[styles.masthead, { marginBottom: keyboard ? 24 : compact ? 32 : 40 }]}>
+            <Text style={styles.wordmark}>SMS</Text>
+            <Text style={{ color: p.muted, fontSize: 12, lineHeight: 18, textAlign: 'center' }}>School Management System</Text>
           </View>
-          {!keyboard && <View style={[styles.hero, { backgroundColor: p.soft, padding: compact ? 18 : 20, minHeight: compact ? 132 : 164, marginBottom: compact ? 24 : 28 }]}>
-            <View style={{ width: largeText ? '100%' : '58%', gap: 8 }}>
-              <Text accessibilityRole="header" style={{ fontSize: compact ? 27 : 29, lineHeight: compact ? 34 : 37, letterSpacing: -0.9, fontWeight: '700' }}>Every day,<Text style={{ color: p.primary, fontSize: compact ? 27 : 29, lineHeight: compact ? 34 : 37, letterSpacing: -0.9, fontWeight: '700' }}>{'\n'}in sync.</Text></Text>
-              <Text style={{ color: p.muted, fontSize: 12, lineHeight: 19 }}>School life, connected.</Text>
-            </View>
-            {!largeText && <View pointerEvents="none" accessible={false} importantForAccessibility="no-hide-descendants" style={styles.artwork}>
-              <View style={[styles.halo, { backgroundColor: p.primary }]} />
-              <Image source={require('../../assets/login-school-illustration.webp')} resizeMode="contain" style={{ width: compact ? 151 : 175, height: compact ? 151 : 175 }} accessible={false} />
-            </View>}
-          </View>}
-          <View style={{ gap: 6, marginBottom: 22 }}><Text accessibilityRole="header" style={styles.heading}>Welcome back</Text><Text style={{ color: p.muted, fontSize: 14, lineHeight: 22 }}>Sign in to your school account.</Text></View>
+          <View style={styles.intro}><Text accessibilityRole="header" style={styles.heading}>Welcome back</Text><Text style={{ color: p.muted, fontSize: 14, lineHeight: 22, textAlign: 'center' }}>Sign in to your school account.</Text></View>
           {message && <View style={[styles.error, { backgroundColor: p.bg }]}><CircleAlert size={18} color={p.danger} /><Text accessibilityRole="alert" style={{ color: p.danger, flex: 1 }}>{message}</Text></View>}
           <View style={{ gap: 16 }}>
             <View style={{ gap: 8 }}>
@@ -74,7 +64,7 @@ export default function Login() {
             </View>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel={busy ? 'Signing in' : 'Sign in'} accessibilityState={{ disabled: busy || !!configError, busy }} disabled={busy || !!configError} onPress={() => void submit()} style={({ pressed }) => [styles.submit, { backgroundColor: p.primary, opacity: busy || configError ? 0.55 : pressed ? 0.82 : 1 }]}>
-            <Text style={{ color: p.onPrimary, fontSize: 15, lineHeight: 23, fontWeight: '600' }}>{busy ? 'Signing in…' : 'Sign in'}</Text>{busy ? <ActivityIndicator size="small" color={p.onPrimary} /> : <ArrowRight color={p.onPrimary} size={19} />}
+            <Text style={{ color: p.onPrimary, fontSize: 15, lineHeight: 23, fontWeight: '600', flexShrink: 1, textAlign: 'center' }}>{busy ? 'Signing in…' : 'Sign in'}</Text>{busy ? <ActivityIndicator size="small" color={p.onPrimary} /> : <ArrowRight color={p.onPrimary} size={19} />}
           </Pressable>
           <View style={styles.footer}><LockKeyhole size={13} strokeWidth={1.7} color={p.muted} /><Text style={{ color: p.muted, fontSize: 12, lineHeight: 19, flexShrink: 1 }}>School-approved accounts only.</Text></View>
           {!keyboard && <Text style={{ color: p.muted, textAlign: 'center', fontSize: 12, lineHeight: 20, marginTop: 8 }}>Need access? Contact your school.</Text>}
@@ -85,15 +75,12 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 24 },
-  content: { width: '100%', maxWidth: 420, alignSelf: 'center' },
-  masthead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16 },
-  wordmark: { fontSize: 30, lineHeight: 37, fontWeight: '800', letterSpacing: -1.5 },
-  accessBadge: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  hero: { borderRadius: 24, overflow: 'hidden', justifyContent: 'center' },
-  artwork: { position: 'absolute', right: -13, bottom: -11, alignItems: 'center', justifyContent: 'center' },
-  halo: { position: 'absolute', width: 142, height: 142, borderRadius: 71, opacity: 0.08 },
-  heading: { fontSize: 27, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8 },
+  scroll: { flexGrow: 1, paddingHorizontal: 24 },
+  content: { width: '100%', maxWidth: 400, alignSelf: 'center' },
+  masthead: { alignItems: 'center', gap: 4 },
+  wordmark: { fontSize: 30, lineHeight: 37, fontWeight: '800', letterSpacing: -1.5, textAlign: 'center' },
+  intro: { alignItems: 'center', gap: 8, marginBottom: 28 },
+  heading: { fontSize: 27, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8, textAlign: 'center' },
   label: { fontSize: 13, lineHeight: 21, fontWeight: '600' },
   field: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 14, minHeight: 56, paddingLeft: 16, paddingRight: 4 },
   input: { flex: 1, minWidth: 0, minHeight: 54, paddingHorizontal: 12, paddingVertical: 13, fontFamily: 'Sora', fontSize: 15, lineHeight: 22 },

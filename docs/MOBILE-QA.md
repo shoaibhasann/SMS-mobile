@@ -2,6 +2,12 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Clean native sign-in — 7 November
+
+The login removes the illustrated hero and security badge in favor of a centered SMS wordmark, heading and 400pt maximum-width form. Field labels stay left-aligned; existing Sora, semantic Light/Dark colors, password-manager support, reveal control, recovery link and MFA routing remain. Compact/keyboard/large-text layouts start from the top and scroll; taller screens center the form without fixed heights. Native-device checks for 360pt width, landscape, large system text, both themes and keyboard reachability remain manual.
+
+TypeScript, Expo lint and 217 tests across eight files pass after this layout change. The Android Hermes export also passes; the removed illustration is absent from the exported asset manifest. Native touch/visual acceptance remains unchecked.
+
 ## Staff/account MFA compatibility — 7 November
 
 The app now checks the own-account security bootstrap before reading family profiles, roles or child records. An enrolled family account, or a mixed staff/Guardian account, receives an authenticator-code screen before the family workspace. Verification uses an isolated nonpersistent client bound to the captured owner, refreshes the current primary session without adopting isolated tokens, and rechecks the native-backed database decision. Wrong codes remain retryable; account changes/backgrounding hide protected records and abort verification. Auth loss during a pending verification still completes saved push cleanup.

@@ -16,11 +16,11 @@ Use the existing shared palette in `src/ui/theme.ts`. Appearance follows the dev
 | Secondary text | `#57667c` | `#a3b0c5` |
 | Field border | `#d6deeb` | `#34425c` |
 
-Sora is the only interface typeface. Use 27–30 pt for the login title/wordmark, 14–15 pt for body and inputs, and 12–13 pt only for short supporting labels. Keep system font scaling enabled. At larger font scales, remove decorative artwork and allow content to wrap and scroll.
+Sora is the only interface typeface. Use 27–30 pt for the login title/wordmark, 14–15 pt for body and inputs, and 12–13 pt only for short supporting labels. Keep system font scaling enabled. At larger font scales, allow content to wrap and scroll.
 
 ## Login composition
 
-A compact SMS masthead, one soft illustrated hero, and a direct sign-in form establish a consistent hierarchy. The bundled school illustration is reused from the existing SMS web product. It is decorative, excluded from accessibility navigation, and hidden while the keyboard is open or larger type needs the space.
+A centered SMS masthead, short welcome message and direct sign-in form establish the hierarchy. Keep the login free of illustration, promotional banners and decorative badges. Center the content horizontally with a 400 pt maximum width; labels stay left-aligned. On taller screens the content can center vertically; compact screens, large text and keyboard-open states start from the top and scroll.
 
 Inputs share the same full-width shell, 56 pt minimum height, inset leading icons, and visible focus outline. Password reveal stays inside its field with a 44 pt minimum target. Never disable paste or password-manager support. The primary action has a trailing arrow and changes to a spinner plus “Signing in…” while busy.
 
