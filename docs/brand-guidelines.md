@@ -1,4 +1,4 @@
-# SMS mobile brand guidelines
+# SMS Mobile brand guidelines
 
 SMS is the product name, always capitalized. The wordmark uses Sora Bold with close tracking, without a graduation-cap icon. School names are account content, not replacement product branding.
 

@@ -29,7 +29,7 @@ export function MfaVerification() {
     finally { submitting.current = false; setBusy(false); setCode(''); }
   }
   async function setup() {
-    try { await Linking.openURL('https://kids-corner-erp-frontend.vercel.app/mfa?next=%2Faccount%2Fsettings'); }
+    try { await Linking.openURL('https://sms-web-shoaibhasann.vercel.app/mfa?next=%2Faccount%2Fsettings'); }
     catch { setError('Account security could not open. Contact your school for help.'); }
   }
   if (!status) return <Screen><Skeleton /></Screen>;

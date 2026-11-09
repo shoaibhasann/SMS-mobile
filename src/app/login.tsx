@@ -32,7 +32,7 @@ export default function Login() {
     finally { submitting.current = false; setBusy(false); }
   }
   async function recover() {
-    try { await Linking.openURL('https://kids-corner-erp-frontend.vercel.app/forgot-password'); }
+    try { await Linking.openURL('https://sms-web-shoaibhasann.vercel.app/forgot-password'); }
     catch { setError('Password recovery could not open. Contact your school for help.'); }
   }
   const field = (name: 'email' | 'password') => [styles.field, { backgroundColor: p.bg, borderColor: focused === name ? p.primary : p.border }];

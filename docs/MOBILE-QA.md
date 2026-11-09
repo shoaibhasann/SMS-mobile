@@ -15,11 +15,13 @@ Final whole checks pass **249 tests/10 files**, TypeScript and warning-free Expo
 - [ ] NGA-03: Toggle OFF/ON, inspect All/Unread/count/read persistence and test uncertain saves, background/account switching and link revocation.
 - [ ] NGA-04: Confirm Absent while both gate options are OFF, old app compatibility and unchanged old records. Real terminal scans and phone-push display need separate acceptance.
 
-Use the [shared gate-alert checklist](https://kids-corner-erp-frontend.vercel.app/qa/gate-alerts-checklist.md). These boxes remain unchecked until actual native/founder testing. No new APK, EAS update, signed distribution, SMS or FCM activation is included in this source release.
+Use the [shared gate-alert checklist](https://sms-web-shoaibhasann.vercel.app/qa/gate-alerts-checklist.md). These boxes remain unchecked until actual native/founder testing. No new APK, EAS update, signed distribution, SMS or FCM activation is included in this source release.
 
 ## Clean native sign-in — 7 November
 
 The login removes the illustrated hero and security badge in favor of a centered SMS wordmark, heading and 400pt maximum-width form. Field labels stay left-aligned; existing Sora, semantic Light/Dark colors, password-manager support, reveal control, recovery link and MFA routing remain. Compact/keyboard/large-text layouts start from the top and scroll; taller screens center the form without fixed heights. Native-device checks for 360pt width, landscape, large system text, both themes and keyboard reachability remain manual.
+
+Password recovery opens the SMS Web site. End-to-end reset acceptance requires a delivered recovery email and the production callback URL in Supabase Auth's redirect allowlist.
 
 TypeScript, Expo lint and 217 tests across eight files pass after this layout change. The Android Hermes export also passes; the removed illustration is absent from the exported asset manifest. Native touch/visual acceptance remains unchecked.
 
@@ -29,7 +31,7 @@ The app now checks the own-account security bootstrap before reading family prof
 
 Native enrollment is intentionally not included. A required account without a factor opens the stable website for its own separate sign-in/setup, with no tokens in the URL; afterward sign out and sign in again on the phone. Pure staff accounts still do not gain family-role access. Web staff policy and role/link rules remain authoritative.
 
-TypeScript, Expo lint and all 217 tests across eight files pass; Android Hermes export passes. Live backend QA proves real native TOTP, lower-assurance denials, pure-family own/linked-child access and exact factor/session revocation. These checks do not establish physical Android/iOS interaction, app distribution or real FCM delivery. Use [the staff MFA checklist](https://kids-corner-erp-frontend.vercel.app/qa/staff-mfa-checklist.md) for device acceptance; MFA-13/14 remain manual.
+TypeScript, Expo lint and all 217 tests across eight files pass; Android Hermes export passes. Live backend QA proves real native TOTP, lower-assurance denials, pure-family own/linked-child access and exact factor/session revocation. These checks do not establish physical Android/iOS interaction, app distribution or real FCM delivery. Use [the staff MFA checklist](https://sms-web-shoaibhasann.vercel.app/qa/staff-mfa-checklist.md) for device acceptance; MFA-13/14 remain manual.
 
 ## Current phase: native Learning
 

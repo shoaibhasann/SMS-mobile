@@ -42,7 +42,7 @@ npx expo-doctor
 npx expo export --platform android
 ```
 
-Tests cover homework/results/leave wire contracts, private upload validation, exact persisted mutation retries, family notification state, account boundaries, encrypted storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [school-management-mobile repository](https://github.com/shoaibhasann/school-management-mobile). App-store release/signing is not configured.
+Tests cover homework/results/leave wire contracts, private upload validation, exact persisted mutation retries, family notification state, account boundaries, encrypted storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [SMS-mobile repository](https://github.com/shoaibhasann/SMS-mobile). App-store release/signing is not configured.
 
 ## Push activation boundary
 
