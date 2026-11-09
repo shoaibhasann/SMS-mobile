@@ -45,25 +45,25 @@ describe('native Guardian gate preferences', () => {
 const arrival = { id: id(4), kind: 'gate_arrival', student_id: id(2), student_name: 'Gate QA child', source_id: id(5),
   created_at: '2026-11-07T04:00:00Z', occurred_at: '2026-11-07T03:00:00Z', delayed: true, read_at: null,
   event_date: '2026-11-07', status: 'IN', title: 'Arrived at school', assessment_id: null };
-describe('native five-kind inbox compatibility', () => {
-  it('decodes actual event time/delay and a five-kind cursor through v2 only', async () => {
+describe('native gate alerts in the exam-capable inbox', () => {
+  it('decodes actual event time/delay and the gate cursor through v8', async () => {
     const cursor = { id: arrival.id, kind: arrival.kind, created_at: arrival.created_at };
-    const f = fixture({ notifications: [arrival], unread_count: 1, next_cursor: cursor });
-    const inbox = await loadFamilyNotificationInbox(f.client, { role: 'parent', limit: 1 });
+    const f = fixture({ user_id: id(1), role: 'parent', notifications: [arrival], unread_count: 1, next_cursor: cursor });
+    const inbox = await loadFamilyNotificationInbox(f.client, { userId: id(1), role: 'parent', limit: 1 });
     expect(inbox.notifications).toEqual([arrival]); expect(inbox.next_cursor).toEqual(cursor);
-    expect(f.rpc.mock.calls[0][0]).toBe('get_family_notification_inbox_v2');
+    expect(f.rpc.mock.calls[0][0]).toBe('get_family_notification_inbox_v8');
   });
   it.each([{ occurred_at: null }, { delayed: 'yes' }, { status: 'OUT' }, { occurred_at: 'bad' }, { occurred_at: '2026-11-07T08:00:00' }])('rejects false arrival metadata %j', async patch => {
-    await expect(loadFamilyNotificationInbox(fixture({ notifications: [{ ...arrival, ...patch }], unread_count: 1, next_cursor: null }).client,
-      { role: 'parent' })).rejects.toThrow('could not be verified');
+    await expect(loadFamilyNotificationInbox(fixture({ user_id: id(1), role: 'parent', notifications: [{ ...arrival, ...patch }], unread_count: 1, next_cursor: null }).client,
+      { userId: id(1), role: 'parent' })).rejects.toThrow('could not be verified');
   });
   it('rejects a Guardian gate alert returned to a Student view', async () => {
-    await expect(loadFamilyNotificationInbox(fixture({ notifications: [arrival], unread_count: 1, next_cursor: null }).client,
-      { role: 'student' })).rejects.toThrow('could not be verified');
+    await expect(loadFamilyNotificationInbox(fixture({ user_id: id(1), role: 'student', notifications: [arrival], unread_count: 1, next_cursor: null }).client,
+      { userId: id(1), role: 'student' })).rejects.toThrow('could not be verified');
   });
-  it('keeps per-recipient read writes in the new five-kind contract', async () => {
+  it('keeps per-recipient read writes in the v8 contract', async () => {
     const f = fixture(arrival.created_at); expect(await markFamilyNotificationRead(f.client, 'parent', 'gate_arrival', arrival.id)).toBe(arrival.created_at);
-    expect(f.rpc).toHaveBeenCalledWith('mark_family_notification_read_v2', { p_role: 'parent', p_kind: 'gate_arrival', p_id: arrival.id });
+    expect(f.rpc).toHaveBeenCalledWith('mark_family_notification_read_v8', { p_role: 'parent', p_kind: 'gate_arrival', p_id: arrival.id });
   });
   it('never starts a Student gate-mark mutation', async () => {
     const f = fixture(null);

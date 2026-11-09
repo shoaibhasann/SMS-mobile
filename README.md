@@ -7,9 +7,9 @@ Separate React Native application for verified Guardian and Student accounts. Bu
 - Email/password sign-in against the existing Supabase project; no automatic signup, guardian linking or staff access.
 - Server-checked active school/family roles, linked-child selection, read-only retained attendance and refresh/pagination.
 - Existing family Notifications with All/Unread, independent saved read state, mark one/all, older history and native result/leave detail targets.
-- Optional per-Guardian/child Arrival and Exit inbox choices, both OFF by default. The updated five-kind inbox uses versioned APIs; older installed apps retain their original three-kind payloads. Absent alerts remain independent of gate choices.
+- Optional per-Guardian/child Arrival and Exit inbox choices, both OFF by default. The current inbox uses the shared v8 API. Older installed apps keep their versioned endpoints. Absent alerts remain independent of gate choices.
 - Learning: current-session published homework, private PDF/JPG/PNG upload (10 MB), Student submit/update and Teacher grade/feedback reload; Guardians read only their linked child’s submission.
-- Published single-assessment results with history paging/latest revisions, and family leave submission/history/independent school decisions.
+- Published single-assessment results and family leave submission/history. Exam schedule alerts open exact, current exam details from Updates.
 - Unconfirmed homework/leave mutations retain an encrypted, account/role/child-scoped exact retry intent across app restarts; school records are not cached for offline browsing.
 - Native Android Firebase Installation ID registration with explicit phone permission, versioned preference enable, private installation proof, remote revoke compatibility, logout/account-switch cleanup and a fixed inbox-only push destination.
 - Encrypted native session storage, no saved child/attendance/inbox cache, stale-request cancellation and session-bound API clients.

@@ -2,6 +2,18 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Android exam schedule alerts — 9 November
+
+The Android Updates screen uses the same v8 family inbox as SMS Web. Tapping a push opens Updates after the app verifies the current family account. **View exam schedule** opens the current assessment by its source ID. An updated exam appears once with its new date and unread state. Opening it leaves the read state untouched. Class-wide exams can match multiple linked children while appearing once in a Guardian inbox.
+
+- [ ] M-23: On an enrolled Android QA device with notifications allowed, background the app. Save a new exam for the QA pupil's current class and section. Verify actual Android notification display with generic text. Tap it, confirm Updates opens for the current account, then open **View exam schedule** and match the name, subject, date, class and instructions.
+- [ ] M-24: Save the schedule again without editing it. Confirm the existing alert and its read state are retained. Change the date and confirm the current item shows **Exam schedule updated** with the new date. Mark it read and refresh to confirm persistence for this recipient.
+- [ ] M-25: Use a disposable Guardian link or a different section. After revoking the only eligible link or completing the exam, reopen an old alert target and check the unavailable state. Verify disabled push preferences, device revocation and denied Android permission separately from inbox access.
+
+Engineering: Android 36 emulator passed disposable Student login, OS permission, real installation registration, live exam queue creation, Updates → exact exam, reschedule and persisted Mark as read. The old job became ineligible. All 253 mobile tests, TypeScript, Expo lint and Android bundle export passed. FCM acceptance and Android tray display/tap remain blocked until the server sender is configured.
+
+The push payload identifies only the Updates destination. Other v8 inbox rows remain readable alongside exam alerts. Homework, notices and fee update details open the authenticated SMS Web workspace.
+
 ## Optional Guardian gate alerts — 7 November
 
 Parent Updates now exposes per-child Arrival/Exit switches, both OFF for a fresh link. Choices auto-save with an immutable consent UUID and optimistic version. Pending mutations block competing switches/refresh; unknown/conflicting outcomes require refresh. Account/session changes abort stale actions, and revoked links/recovered owners cannot restore earlier consent. These choices affect the school inbox only; Absent alerts remain independent. A missing scan does not automatically mean Absent.

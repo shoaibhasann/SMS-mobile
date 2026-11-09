@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 import { listChildren, loadAttendance, readFamilyAccess, type FamilyAccess, type FamilyChild } from '../src/data/family';
-import { loadFamilyNotificationInbox, loadFamilyNotificationUnreadCount, markAllFamilyNotificationsRead, markFamilyNotificationRead, type FamilyNotification } from '../src/data/notifications';
+import { getFamilyExamSchedule, loadFamilyNotificationInbox, loadFamilyNotificationUnreadCount, markAllFamilyNotificationsRead, markFamilyNotificationRead, type FamilyNotification } from '../src/data/notifications';
 
 const id = (n: number) => `41000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const stamp = '2026-11-06T15:00:00.123456+00:00';
@@ -130,29 +130,57 @@ describe('mobile verified family access and retained attendance',()=>{
 
 const alert = (patch:Partial<FamilyNotification>={}):FamilyNotification=>({id:id(10),kind:'absence',student_id:id(3),student_name:'QA child',created_at:stamp,read_at:null,event_date:'2026-11-06',source_id:id(11),status:'absent',title:'Attendance marked absent',assessment_id:null,occurred_at:null,delayed:false,...patch});
 function rpcClient(data:unknown,error:{code:string}|null=null){const abortSignal=vi.fn().mockResolvedValue({data,error});const rpc=vi.fn().mockReturnValue(Object.assign(Promise.resolve({data,error}),{abortSignal}));return {client:{rpc} as unknown as SupabaseClient,rpc,abortSignal};}
-const inbox=(notifications=[alert()])=>({notifications,unread_count:'3',next_cursor:null});
+const inbox=(notifications=[alert()], role: 'parent' | 'student' = 'parent')=>({user_id:id(1),role,notifications,unread_count:'3',next_cursor:null});
 describe('native shared notification contract',()=>{
   it('keeps server unread filtering, cursor precision, exact limits and AbortSignal',async()=>{
     const next={created_at:stamp,kind:'absence' as const,id:id(10)},saved=rpcClient({...inbox(),next_cursor:next});const signal=new AbortController().signal;
-    const result=await loadFamilyNotificationInbox(saved.client,{role:'parent',unreadOnly:true,limit:1},signal);expect(result.next_cursor).toEqual(next);expect(result.unread_count).toBe(3);expect(saved.abortSignal).toHaveBeenCalledWith(signal);
-    expect(saved.rpc).toHaveBeenCalledWith('get_family_notification_inbox_v2',{p_role:'parent',p_unread_only:true,p_limit:1,p_before_created_at:null,p_before_kind:null,p_before_id:null});
+    const result=await loadFamilyNotificationInbox(saved.client,{userId:id(1),role:'parent',unreadOnly:true,limit:1},signal);expect(result.next_cursor).toEqual(next);expect(result.unread_count).toBe(3);expect(saved.abortSignal).toHaveBeenCalledWith(signal);
+    expect(saved.rpc).toHaveBeenCalledWith('get_family_notification_inbox_v8',{p_role:'parent',p_unread_only:true,p_limit:1,p_before_created_at:null,p_before_kind:null,p_before_id:null});
   });
   it.each([
     {notifications:[alert(),alert()]}, {notifications:[alert({event_date:'2026-02-30'})]}, {notifications:[alert({kind:'result_published',status:'published'})]},
-    {unread_count:'9007199254740992'}, {next_cursor:{created_at:stamp,kind:'absence',id:id(99)}},
+    {unread_count:'9007199254740992'}, {user_id:id(99)}, {role:'student'}, {next_cursor:{created_at:stamp,kind:'absence',id:id(99)}},
   ])('rejects malformed native inbox responses %j',async(patch: Record<string, unknown>)=>{
-    await expect(loadFamilyNotificationInbox(rpcClient({...inbox(),...patch}).client,{role:'parent'})).rejects.toThrow('could not be verified');
+    await expect(loadFamilyNotificationInbox(rpcClient({...inbox(),...patch}).client,{userId:id(1),role:'parent'})).rejects.toThrow('could not be verified');
   });
   it('whitelists fields, distinguishes unavailable marks and validates mutation acknowledgements',async()=>{
-    const saved=rpcClient({...inbox(),notifications:[{...alert(),review_note:'private'}]});expect((await loadFamilyNotificationInbox(saved.client,{role:'student'})).notifications[0]).not.toHaveProperty('review_note');
+    const saved=rpcClient(inbox([{...alert(),review_note:'private'} as FamilyNotification], 'student'));expect((await loadFamilyNotificationInbox(saved.client,{userId:id(1),role:'student'})).notifications[0]).not.toHaveProperty('review_note');
     expect(await markFamilyNotificationRead(rpcClient(null).client,'parent','absence',id(10))).toBeNull();
     expect(await markFamilyNotificationRead(rpcClient(stamp).client,'student','result_published',id(10))).toBe(stamp);
     expect(await markAllFamilyNotificationsRead(rpcClient('3').client,'parent')).toBe(3);expect(await loadFamilyNotificationUnreadCount(rpcClient('3').client,'student')).toBe(3);
     await expect(markAllFamilyNotificationsRead(rpcClient(-1).client,'parent')).rejects.toThrow();await expect(markFamilyNotificationRead(rpcClient('ok').client,'parent','absence',id(10))).rejects.toThrow();
   });
   it('rejects high-role contexts, invalid references and unread pages containing read records',async()=>{
-    const saved=rpcClient(inbox());await expect(loadFamilyNotificationInbox(saved.client,{role:'admin' as 'parent'})).rejects.toThrow('valid family');expect(saved.rpc).not.toHaveBeenCalled();
+    const saved=rpcClient(inbox());await expect(loadFamilyNotificationInbox(saved.client,{userId:id(1),role:'admin' as 'parent'})).rejects.toThrow('valid family');expect(saved.rpc).not.toHaveBeenCalled();
     await expect(markFamilyNotificationRead(saved.client,'parent','absence','bad')).rejects.toThrow();
-    await expect(loadFamilyNotificationInbox(rpcClient(inbox([alert({read_at:stamp})])).client,{role:'parent',unreadOnly:true})).rejects.toThrow();
+    await expect(loadFamilyNotificationInbox(rpcClient(inbox([alert({read_at:stamp})])).client,{userId:id(1),role:'parent',unreadOnly:true})).rejects.toThrow();
+  });
+});
+
+describe('native exam schedule alerts', () => {
+  const exam = alert({ kind: 'exam_schedule', status: 'rescheduled', student_id: null, student_name: null, title: 'Math test' });
+  it('reads the shared exam event, then marks its revision rather than its assessment', async () => {
+    const saved = rpcClient(inbox([exam]));
+    expect((await loadFamilyNotificationInbox(saved.client, { userId: id(1), role: 'parent' })).notifications).toEqual([exam]);
+    const mark = rpcClient(stamp);
+    await expect(markFamilyNotificationRead(mark.client, 'parent', exam.kind, exam.id)).resolves.toBe(stamp);
+    expect(mark.rpc).toHaveBeenCalledWith('mark_family_notification_read_v8', { p_role: 'parent', p_kind: 'exam_schedule', p_id: exam.id });
+    const invalid = rpcClient(inbox([{ ...exam, student_id: id(3) }]));
+    await expect(loadFamilyNotificationInbox(invalid.client, { userId: id(1), role: 'parent' })).rejects.toThrow('could not be verified');
+  });
+
+  it('opens only the exact assessment and whitelists its schedule fields', async () => {
+    const detail = { id: exam.source_id, name: exam.title, assessment_date: exam.event_date, subject_name: 'Math',
+      class_name: 'Class 7', section_name: null, description: 'Bring a pencil.' };
+    const signal = new AbortController().signal;
+    const saved = rpcClient({ ...detail, marks: 98, student_id: id(3) });
+    await expect(getFamilyExamSchedule(saved.client, 'parent', exam.source_id, signal)).resolves.toEqual(detail);
+    expect(saved.rpc).toHaveBeenCalledWith('get_family_exam_schedule', { p_role: 'parent', p_assessment_id: exam.source_id });
+    expect(saved.abortSignal).toHaveBeenCalledWith(signal);
+    await expect(getFamilyExamSchedule(rpcClient(null).client, 'student', exam.source_id, signal)).resolves.toBeNull();
+    await expect(getFamilyExamSchedule(rpcClient({ ...detail, id: exam.id }).client, 'student', exam.source_id, signal)).rejects.toThrow('could not be verified');
+    const invalid = rpcClient(detail);
+    await expect(getFamilyExamSchedule(invalid.client, 'student', [exam.source_id, exam.id], signal)).rejects.toThrow('exam link is invalid');
+    expect(invalid.rpc).not.toHaveBeenCalled();
   });
 });

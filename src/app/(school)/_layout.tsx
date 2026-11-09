@@ -15,7 +15,7 @@ function PushHints() {
   useEffect(() => {
     let active = true, unsubscribe = () => {};
     void attachPushInboxHints({ userId: access!.userId, role, configured: Constants.expoConfig?.extra?.firebaseConfigured === true,
-      onInboxHint: event => { if (active && event === 'opened') router.push('/(school)/notifications'); },
+      onInboxHint: event => { if (active && event === 'opened') router.navigate({ pathname: '/(school)/notifications', params: { assessment: '' } }); },
     }).then(stop => { if (active) unsubscribe = stop; else stop(); }).catch(() => {});
     return () => { active = false; unsubscribe(); };
   }, [access, role]);
