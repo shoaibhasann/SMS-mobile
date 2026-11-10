@@ -19,7 +19,7 @@ export default function Attendance() {
   }, [access, role, child, pageOffset, client]);
   const result = useLoad(`${access?.userId}:${role}:${child?.id}:${pageOffset}`, read);
   function page(value: number) { setForChild(child!.id); setOffset(value); }
-  return <Screen><Title title="Attendance" subtitle="Saved school records. Unmarked days are not counted as absent." /><ChildPicker />
+  return <Screen><Title title="Attendance" subtitle="Saved school records. Unmarked days are not counted as absent." />{child && <ChildPicker />}
     {family.loading || result.loading ? <Skeleton /> : family.error ? <ErrorCard message={family.error} retry={family.refresh} /> : result.error ? <ErrorCard message={result.error} retry={result.reload} /> : !child ? <Card><Text>No student profile is currently linked.</Text></Card> : !result.data?.rows.length ? <Card><Text>No saved attendance records in this page.</Text></Card> : <Card>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><Text accessibilityRole="header" style={{ fontWeight: '700' }}>Attendance history</Text><Text style={{ color: p.muted }}>{result.data.count} saved</Text></View>
       {result.data.rows.map(row => <View key={`${row.academic_year_id}:${row.attendance_date}`} style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, borderTopWidth: 1, borderTopColor: p.border, paddingTop: 14, paddingBottom: 3 }}>

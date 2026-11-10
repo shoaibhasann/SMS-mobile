@@ -11,6 +11,7 @@
       "bundleIdentifier": "tech.iamshoaib.sms"
     },
     "android": {
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/sms-icon.png",
         "backgroundColor": "#3867ff"

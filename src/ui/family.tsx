@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
+import { Check, ChevronDown, UserRound } from 'lucide-react-native';
 import { listChildren, type FamilyChild } from '../data';
 import { useAuth } from '../auth/provider';
-import { Card, Text } from './primitives';
+import { Text } from './primitives';
 import { usePalette } from './theme';
 
 type Family = { children: FamilyChild[]; selected: FamilyChild | null; loading: boolean; error: string | null; select(id: string): void; refresh(): void };
@@ -29,13 +30,37 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={{ ...result, selected: result.children.find(child => child.id === selectedId) ?? null, select, refresh: () => { setResult({ children: [], loading: true, error: null }); setRevision(value => value + 1); } }}>{children}</Context.Provider>;
 }
 export function useFamily() { const context = useContext(Context); if (!context) throw new Error('Family provider missing.'); return context; }
-export function ChildPicker() {
+export function ChildPicker({ child, onSelect, disabled = false }: { child?: FamilyChild; onSelect?(child: FamilyChild): void; disabled?: boolean } = {}) {
   const family = useFamily(), { role } = useAuth(), p = usePalette();
-  if (!family.selected) return null;
-  return <Card><Text style={{ color: p.muted, fontSize: 12 }}>{role === 'parent' ? 'YOUR LINKED CHILDREN' : 'YOUR SCHOOL PROFILE'}</Text>
-    <View style={{ gap: 8 }}>{family.children.map(child => <Pressable key={child.id} accessibilityRole="button" accessibilityLabel={`Select ${childName(child)}`}
-      accessibilityState={{ selected: child.id === family.selected?.id }} onPress={() => family.select(child.id)}
-      style={({ pressed }) => ({ borderWidth: 1, borderColor: child.id === family.selected?.id ? p.primary : p.border, borderRadius: 12, minHeight: 56, padding: 12, backgroundColor: child.id === family.selected?.id ? p.soft : p.surface, opacity: pressed ? 0.7 : 1 })}>
-      <Text style={{ fontWeight: '600' }}>{childName(child)}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{child.admission_no}</Text>
-    </Pressable>)}</View></Card>;
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  const selected = child ?? family.selected;
+  if (role !== 'parent' || family.loading || family.error || family.children.length < 2 || !selected) return null;
+
+  const expanded = !disabled && openFor === selected.id;
+  return <View style={{ gap: 6 }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Switch student. Selected: ${childName(selected)}`}
+      accessibilityState={{ expanded, disabled }} disabled={disabled} onPress={() => setOpenFor(expanded ? null : selected.id)}
+      style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12,
+        borderWidth: 1, borderColor: p.border, backgroundColor: p.surface, opacity: disabled || pressed ? 0.65 : 1 })}>
+      <UserRound size={16} color={p.primary} />
+      <Text numberOfLines={1} style={{ flex: 1, fontWeight: '600' }}>{childName(selected)}</Text>
+      <ChevronDown size={17} color={p.muted} style={expanded ? { transform: [{ rotate: '180deg' }] } : undefined} />
+    </Pressable>
+    {expanded && <View style={{ gap: 4, padding: 4, borderWidth: 1, borderColor: p.border, backgroundColor: p.surface, borderRadius: 12 }}>
+      {family.children.map(option => {
+        const active = option.id === selected.id;
+        return <Pressable key={option.id} accessibilityRole="button" accessibilityLabel={`Select ${childName(option)}, admission ${option.admission_no}`}
+          accessibilityState={{ selected: active }} onPress={() => {
+            setOpenFor(null);
+            if (active) return;
+            if (onSelect) onSelect(option);
+            else family.select(option.id);
+          }} style={({ pressed }) => ({ minHeight: 48, paddingVertical: 6, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 8,
+            backgroundColor: active || pressed ? p.soft : p.surface })}>
+          <View style={{ flex: 1 }}><Text style={{ fontWeight: '600' }}>{childName(option)}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{option.admission_no}</Text></View>
+          {active && <Check size={16} color={p.primary} />}
+        </Pressable>;
+      })}
+    </View>}
+  </View>;
 }

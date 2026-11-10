@@ -5,7 +5,9 @@ export type PushOwner = { userId: string; role: PushRole };
 export type PushEnrollment = { state: 'pending' | 'registered' | 'cleanup-required'; deviceId: string | null; generation: number | null };
 export type PushArguments = PushOwner & { client: SupabaseClient };
 export type PushHint = 'received' | 'opened';
+export type PushPermission = 'granted' | 'prompt' | 'settings';
 export type PushDriver = {
+  readPermission(): Promise<PushPermission>;
   requestPermission(): Promise<boolean>;
   register(): Promise<string>;
   disconnect(): Promise<void>;
@@ -80,8 +82,16 @@ export function createPushLifecycle(deps: PushDependencies) {
       : deps.platform() !== 'android' ? { available: false, reason: 'Phone push enrollment is Android-only in this build.' }
         : { available: true, reason: '' };
   }
+  async function readNativePushPermission(configured: boolean) {
+    if (!getPushAvailability(configured).available) return null;
+    const driver = await limited(deps.driver());
+    return limited(driver.readPermission());
+  }
   async function readPushEnrollment(args: PushOwner): Promise<PushEnrollment | null> {
-    owner(args); const binding = await read();
+    owner(args);
+    // Android's permission dialog can remount the screen before enrollment finishes.
+    await running?.catch(() => {});
+    const binding = await read();
     return binding && sameOwner(binding, args) ? { state: binding.state, deviceId: binding.deviceId, generation: binding.generation } : null;
   }
   async function enableNativePush(args: PushArguments & { configured: boolean; label: string }) {
@@ -92,10 +102,11 @@ export function createPushLifecycle(deps: PushDependencies) {
     if (!args.label.trim() || Array.from(args.label.trim()).length > 80) throw new NativePushError('Choose a phone name between 1 and 80 characters.', 'validation');
     const expected = ++epoch; stopHints();
     const task = (async () => {
-      if (cleanupBlocked || nativePending) throw new NativePushError('Disconnect the previous phone registration before enabling alerts.', 'cleanup');
+      if (cleanupBlocked) throw new NativePushError('Disconnect the previous phone registration before enabling alerts.', 'cleanup');
+      if (nativePending) throw new NativePushError('Phone registration is still finishing. Try again shortly.', 'cleanup');
       await assertOwner(args); current(expected);
       let binding = await read(); current(expected);
-      if (binding && (!sameOwner(binding, args) || binding.state === 'cleanup-required' || binding.state === 'pending' && !binding.fid)) throw new NativePushError('Disconnect the previous phone registration before enabling alerts.', 'cleanup');
+      if (binding && (!sameOwner(binding, args) || binding.state === 'cleanup-required')) throw new NativePushError('Disconnect the previous phone registration before enabling alerts.', 'cleanup');
       const settings = record(await rpc(args.client, 'get_my_family_push_settings', { p_role: args.role })); current(expected);
       const prefs = record(settings.preferences);
       if (![prefs.enabled, prefs.absence, prefs.result_published, prefs.leave_decision].every(value => typeof value === 'boolean') || !Number.isSafeInteger(prefs.version) || Number(prefs.version) < 0 || !Array.isArray(settings.devices)) throw new NativePushError('Notification preferences could not be verified. Refresh settings.', 'response');
@@ -105,7 +116,11 @@ export function createPushLifecycle(deps: PushDependencies) {
         throw new NativePushError('This phone registration was revoked. Disconnect it before explicitly enabling a new registration.', 'revoked');
       }
       const driver = await deps.driver(); current(expected);
-      if (!await limited(driver.requestPermission(), 30_000)) throw new NativePushError('Phone notification permission was not granted.', 'permission');
+      const permission = await limited(driver.readPermission()); current(expected);
+      if (permission !== 'granted' && (permission === 'settings' || binding?.state === 'registered'
+        || !await limited(driver.requestPermission(), 30_000))) {
+        throw new NativePushError('Allow SMS notifications in Android settings.', 'permission');
+      }
       current(expected);
       if (!binding) {
         const identity = await deps.identity(); current(expected);
@@ -154,7 +169,8 @@ export function createPushLifecycle(deps: PushDependencies) {
       if (!binding && !storageInvalid && !nativePending && !cleanupBlocked) return { serverRevoked: true, nativeCleared: true };
       cleanupBlocked = true;
       if (binding) { binding.state = 'cleanup-required'; await write(binding).catch(() => {}); }
-      let serverRevoked = false;
+      // Without a saved FID no registration RPC has been sent for this binding.
+      let serverRevoked = !!binding && !!args && sameOwner(binding, args) && !binding.fid && !binding.deviceId;
       if (binding && args && sameOwner(binding, args) && binding.deviceId) {
         try { await assertOwner(args); serverRevoked = await rpc(args.client, 'revoke_my_family_push_device', { p_role: binding.role, p_device_id: binding.deviceId }) === true; } catch { /* Native cleanup still runs after sign-in expires. */ }
       }
@@ -175,8 +191,10 @@ export function createPushLifecycle(deps: PushDependencies) {
     return { nativeCleared: result.nativeCleared };
   }
   async function attachPushInboxHints(args: PushOwner & { configured: boolean; onInboxHint(kind: PushHint): void }) {
+    if (!getPushAvailability(args.configured).available) return () => {};
+    await running?.catch(() => {});
     const expected = epoch;
-    if (!getPushAvailability(args.configured).available || running || cleanupBlocked) return () => {};
+    if (running || cleanupBlocked) return () => {};
     const binding = await read();
     if (!binding || !sameOwner(binding, args) || binding.state !== 'registered' || expected !== epoch) return () => {};
     const driver = await deps.driver();
@@ -186,5 +204,5 @@ export function createPushLifecycle(deps: PushDependencies) {
     stopHints(); detach = unsubscribe;
     return () => { unsubscribe(); if (detach === unsubscribe) detach = () => {}; };
   }
-  return { getPushAvailability, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints };
+  return { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints };
 }

@@ -2,6 +2,16 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Signed Android QA build — 10 November
+
+Use signed QA3 (Android version code 3) and the privately supplied Student and Parent logins. QA3 upgrades the earlier signed QA APK in place. The exact APK passed emulator upgrade, first permission Allow, denial → Android settings recovery, and linked attendance. Physical delivery and tap acceptance are below.
+
+- [ ] Open Home, Attendance and Learning with the Student or single-child Parent. No repeated profile card appears. With multiple linked children, the compact switcher changes only the selected child’s records.
+- [ ] In Attendance, refresh and confirm a saved Present row. In Learning, check two homework tasks, including one graded task. In Updates, check homework and fee receipt alerts. The detailed fee ledger opens on SMS Web.
+- [ ] On a fresh Android install, open Account → Mobile notifications → Turn on notifications. Allow the Android dialog. Verify Account resumes, the card shows On, and the Turn on action disappears.
+- [ ] Deny or revoke Android notification permission. SMS offers Open Android settings. Allow permission there and return. Verify the card refreshes; use Turn on if this phone has not registered yet.
+- [ ] Turn off alerts on this phone, sign out, and sign in with the other QA role. Only the current account's notification state is visible. Test actual phone delivery and tap into Updates separately.
+
 ## Android exam schedule alerts — 9 November
 
 The Android Updates screen uses the same v8 family inbox as SMS Web. Tapping a push opens Updates after the app verifies the current family account. **View exam schedule** opens the current assessment by its source ID. An updated exam appears once with its new date and unread state. Opening it leaves the read state untouched. Class-wide exams can match multiple linked children while appearing once in a Guardian inbox.
@@ -72,7 +82,7 @@ Use existing private QA credentials; never paste passwords, session tokens, FIDs
 - [ ] M-06: Sign out/switch account or role during a slow read, write or open confirmation. Previous rows disappear; an old dialog cannot write using the next account's token.
 - [ ] M-07: Background/foreground, offline/reconnect and expired sessions do not display stale records as current. Sign-out failures show a retry message; device cleanup failures block another enrollment.
 - [ ] M-08: Light/Dark follow system settings. Check small/large phone, landscape, keyboard, long names, largest font, TalkBack and reduced motion. Tap targets remain usable and bottom controls respect safe areas.
-- [ ] M-09: Enable on this phone requests Android permission explicitly. Denial never reports a successful registration. Granted permission creates only this own account/role installation. Account master preference enable is separately confirmed; it never claims phone delivery.
+- [ ] M-09: Turn on notifications prompts for Android permission on first use. Allowing it registers this phone for the current account and shows On for this phone. After denial, use Open Android settings and return to check the refreshed state.
 - [ ] M-10: Revoke from the web while queued, disconnect, logout, account/role switch, fresh session and reinstall/reset. The previous identity cannot silently reactivate or transfer to another owner. Other phones/children/read states remain intact.
 - [ ] M-11: After approved server configuration, create a fresh eligible event. Record job, provider acceptance, real phone display, tap→authenticated inbox and permitted source record separately. Duplicate/expired/revoked jobs must not leak private data.
 - [ ] M-12: Test foreground/background/terminated app, disabled OS permission, FID rotation and notification tap before login. Arbitrary payload URLs must not navigate or execute. Previously accepted neutral OS alerts cannot be recalled retroactively.

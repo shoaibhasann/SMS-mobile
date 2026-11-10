@@ -1,5 +1,8 @@
 import { PermissionsAndroid, Platform } from 'react-native';
-import { NativePushError, type PushDriver } from './core';
+import * as SecureStore from 'expo-secure-store';
+import { NativePushError, type PushDriver, type PushPermission } from './core';
+
+const permissionAttemptKey = 'sms.push.permission-prompted.v1';
 
 // Imports stay lazy: an unconfigured build and ordinary sign-in never initialize Firebase.
 export async function createNativeDriver(): Promise<PushDriver> {
@@ -7,32 +10,31 @@ export async function createNativeDriver(): Promise<PushDriver> {
   const [app, messaging, installations] = await Promise.all([
     import('@react-native-firebase/app'), import('@react-native-firebase/messaging'), import('@react-native-firebase/installations'),
   ]);
-  if (!app.getApps().length) throw new NativePushError('Firebase is not available in this build. Install the configured Android development build.');
+  if (!app.getApps().length) throw new NativePushError('Firebase is not available in this build. Install the configured Android app.');
   const firebaseApp = app.getApp(), instance = messaging.getMessaging(firebaseApp);
   const failed = () => new NativePushError('The native phone registration could not be confirmed. Retry or disconnect before sharing this phone.', 'native');
+  async function readPermission(): Promise<PushPermission> {
+    if (await messaging.hasPermission(instance) === messaging.AuthorizationStatus.AUTHORIZED) return 'granted';
+    return Number(Platform.Version) < 33 || await SecureStore.getItemAsync(permissionAttemptKey) === '1' ? 'settings' : 'prompt';
+  }
   return {
+    readPermission,
     async requestPermission() {
-      return Number(Platform.Version) < 33 || await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) === PermissionsAndroid.RESULTS.GRANTED;
+      const permission = await readPermission();
+      if (permission !== 'prompt') return permission === 'granted';
+      await SecureStore.setItemAsync(permissionAttemptKey, '1');
+      return await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) === PermissionsAndroid.RESULTS.GRANTED;
     },
     async register() {
-      let unsubscribe = () => {}, timer: ReturnType<typeof setTimeout> | undefined;
-      let receive!: (installationId: string) => void;
-      let currentId: string | null = null, observedId: string | null = null;
-      const received = new Promise<string>(resolve => { receive = resolve; });
       try {
-        // Subscribe before register: the SDK can replay an already registered FID immediately.
-        unsubscribe = messaging.onRegistered(instance, value => {
-          observedId = value; if (value === currentId) receive(value);
-        });
+        const installation = installations.getInstallations(firebaseApp);
+        const before = await installations.getId(installation);
+        // The native task confirms FCM registration before the asynchronous event reaches JS.
         await messaging.register(instance);
-        // A previous unregister event can still be crossing the native bridge; reject stale cache replay.
-        currentId = await installations.getId(installations.getInstallations(firebaseApp));
-        if (observedId === currentId) receive(currentId);
-        return await Promise.race([received, new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(failed()), 10_000);
-        })]);
+        const after = await installations.getId(installation);
+        if (before !== after) throw failed();
+        return after;
       } catch { throw failed(); }
-      finally { clearTimeout(timer); unsubscribe(); }
     },
     async disconnect() {
       // Keep auto-init off even after explicit enrollment; account changes must not recreate a FID.

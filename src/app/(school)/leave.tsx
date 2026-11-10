@@ -4,10 +4,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '../../auth/provider';
-import { childName, type FamilyAccess, type FamilyChild, type FamilyRole } from '../../data/family';
+import type { FamilyAccess, FamilyChild, FamilyRole } from '../../data/family';
 import { getFamilyNotificationLeave, leaveOverlaps, listFamilyStudentLeave, StudentLeaveError, submitStudentLeave, validateLeaveTarget, validateStudentLeave, type StudentLeaveRequest } from '../../data/leave';
 import { createPendingLeaveStore, type PendingLeaveIntent, type LeaveDraft } from '../../data/pending-leave';
-import { useFamily } from '../../ui/family';
+import { ChildPicker, useFamily } from '../../ui/family';
 import { useLoad } from '../../ui/use-load';
 import { Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
 import { usePalette } from '../../ui/theme';
@@ -100,10 +100,8 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
   }
   const field = { minHeight: 54, borderWidth: 1, borderColor: p.border, color: p.text, backgroundColor: p.bg, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontFamily: 'Sora', fontSize: 15, lineHeight: 22 };
   return <>
-    <Card><Text style={{ color: p.muted, fontSize: 12 }}>{role === 'parent' ? 'LINKED STUDENT' : 'YOUR SCHOOL PROFILE'}</Text>
-      {family.children.map(value => <Button key={value.id} label={`${childName(value)} · ${value.admission_no}`} secondary={value.id !== child.id} disabled={value.id === child.id || busy || !!pending || pendingLoading || !!pendingError} onPress={() => select(value)} />)}
-      {(busy || pending) && <Text style={{ color: p.muted }}>Student selection is locked until this request is confirmed. An unconfirmed request is kept securely for this account and student.</Text>}
-    </Card>
+    <ChildPicker child={child} onSelect={select} disabled={locked} />
+    {role === 'parent' && family.children.length > 1 && (busy || pending) && <Text style={{ color: p.muted }}>Student selection is locked until this request is confirmed. An unconfirmed request is kept securely for this account and student.</Text>}
     {requestId && (decision.loading ? <Skeleton rows={1} /> : decision.error ? <ErrorCard message={decision.error} retry={decision.reload} /> : decision.data ? <LeaveRecord row={decision.data} expanded /> : <Card><Text>This leave decision is currently unavailable. Refresh school access or contact your school.</Text></Card>)}
     <Card><Text accessibilityRole="header" style={{ fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{pending ? 'Confirm your submitted request' : 'Request leave'}</Text>
       <Text style={{ color: p.muted }}>Dates must be within the current academic year. An approved request does not automatically mark attendance.</Text>
