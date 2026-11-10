@@ -41,11 +41,22 @@
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
-    "ios": "expo run:ios",
+    "ios": "SMS_BUILD_PLATFORM=ios expo run:ios",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "exclude": [
+          "@react-native-firebase/app",
+          "@react-native-firebase/installations",
+          "@react-native-firebase/messaging"
+        ]
+      }
+    }
   },
   "private": true,
   "engines": {

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const androidFile = resolve(process.env.SMS_FIREBASE_ANDROID_FILE ?? '.private/google-services.json');
-  const firebaseConfigured = existsSync(androidFile);
+  const firebaseConfigured = process.env.SMS_BUILD_PLATFORM !== 'ios' && existsSync(androidFile);
   if (firebaseConfigured) {
     const file = JSON.parse(readFileSync(androidFile, 'utf8'));
     if (!file.client?.some((client: { client_info?: { android_client_info?: { package_name?: string } } }) => client.client_info?.android_client_info?.package_name === 'tech.iamshoaib.sms')) {
