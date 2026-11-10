@@ -1,4 +1,4 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, ToastAndroid } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { NativePushError, type PushDriver, type PushPermission } from './core';
 
@@ -13,6 +13,10 @@ export async function createNativeDriver(): Promise<PushDriver> {
   if (!app.getApps().length) throw new NativePushError('Firebase is not available in this build. Install the configured Android app.');
   const firebaseApp = app.getApp(), instance = messaging.getMessaging(firebaseApp);
   const failed = () => new NativePushError('The native phone registration could not be confirmed. Retry or disconnect before sharing this phone.', 'native');
+  async function currentInstallationId() {
+    try { return await installations.getId(installations.getInstallations(firebaseApp)); }
+    catch { throw new NativePushError('Phone registration could not be verified. Try again.', 'native'); }
+  }
   async function readPermission(): Promise<PushPermission> {
     if (await messaging.hasPermission(instance) === messaging.AuthorizationStatus.AUTHORIZED) return 'granted';
     return Number(Platform.Version) < 33 || await SecureStore.getItemAsync(permissionAttemptKey) === '1' ? 'settings' : 'prompt';
@@ -25,13 +29,13 @@ export async function createNativeDriver(): Promise<PushDriver> {
       await SecureStore.setItemAsync(permissionAttemptKey, '1');
       return await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) === PermissionsAndroid.RESULTS.GRANTED;
     },
+    currentInstallationId,
     async register() {
       try {
-        const installation = installations.getInstallations(firebaseApp);
-        const before = await installations.getId(installation);
+        const before = await currentInstallationId();
         // The native task confirms FCM registration before the asynchronous event reaches JS.
         await messaging.register(instance);
-        const after = await installations.getId(installation);
+        const after = await currentInstallationId();
         if (before !== after) throw failed();
         return after;
       } catch { throw failed(); }
@@ -45,6 +49,9 @@ export async function createNativeDriver(): Promise<PushDriver> {
       let deleted = false;
       try { await installations.deleteInstallations(installations.getInstallations(firebaseApp)); deleted = true; } catch { /* The core retains the cleanup tombstone. */ }
       if (!deleted || stopped.some(result => result.status === 'rejected')) throw failed();
+    },
+    showForegroundHint() {
+      ToastAndroid.show('New school update. Open Updates to view it.', ToastAndroid.SHORT);
     },
     async listen(callback) {
       let active = true;

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
-import { listChildren, loadAttendance, readFamilyAccess, type FamilyAccess, type FamilyChild } from '../src/data/family';
+import { attendanceMonths, listChildren, loadAttendance, loadAttendanceYears, loadClassTeachers, readFamilyAccess, type FamilyAccess, type FamilyChild } from '../src/data/family';
 import { getFamilyExamSchedule, loadFamilyNotificationInbox, loadFamilyNotificationUnreadCount, markAllFamilyNotificationsRead, markFamilyNotificationRead, type FamilyNotification } from '../src/data/notifications';
 
 const id = (n: number) => `41000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -30,6 +30,8 @@ function mockClient() {
     const builder = {
       select(columns:string){q.selection=columns;return builder;},
       eq(column:string,value:unknown){q.filters.push([column,value]);return builder;},
+      gte(column:string,value:unknown){q.filters.push([`gte:${column}`,value]);return builder;},
+      lte(column:string,value:unknown){q.filters.push([`lte:${column}`,value]);return builder;},
       in(column:string,value:unknown){q.filters.push([column,value]);return builder;},
       order(){return builder;},limit(){return builder;},
       range(first:number,last:number){q.range=[first,last];return builder;},
@@ -105,6 +107,19 @@ describe('mobile verified family access and retained attendance',()=>{
     const saved=mockClient();saved.patch('student_parents',{data:[],count:0,error:null});await expect(loadAttendance(saved.client,access,'parent',child)).rejects.toThrow('family access');
     expect(saved.queries.some(q=>q.table==='attendance')).toBe(false);
   });
+  it('filters the full scoped dataset by year, month and status before pagination, including leap day',async()=>{
+    const saved=mockClient(), row={attendance_date:'2028-02-29',academic_year_id:id(5),status:'absent',student_id:id(3),school_id:id(2)};
+    const filters={yearId:id(5),month:'2028-02-01',status:'absent' as const};
+    saved.patch('attendance',{data:[row],count:1,error:null});
+    expect((await loadAttendance(saved.client,access,'parent',child,filters)).count).toBe(1);
+    expect(saved.queries.find(q=>q.table==='attendance')?.filters).toEqual([
+      ['school_id',id(2)],['student_id',id(3)],['academic_year_id',id(5)],['gte:attendance_date','2028-02-01'],['lte:attendance_date','2028-02-29'],['status','absent'],
+    ]);
+    await expect(loadAttendance(saved.client,access,'parent',child,{...filters,month:'2028-02-29'})).rejects.toThrow('valid attendance filter');
+    await expect(loadAttendance(saved.client,access,'parent',child,{...filters,month:'2028-01-01'})).rejects.toThrow('could not be verified');
+    saved.patch('attendance',{data:[row],count:2,error:null});
+    await expect(loadAttendance(saved.client,access,'parent',child,filters)).rejects.toThrow('could not be verified');
+  });
   it.each([
     {attendance_date:'2026-02-30',academic_year_id:id(5),status:'absent'},
     {attendance_date:'2026-11-05',academic_year_id:'bad',status:'absent'},
@@ -130,6 +145,36 @@ describe('mobile verified family access and retained attendance',()=>{
 
 const alert = (patch:Partial<FamilyNotification>={}):FamilyNotification=>({id:id(10),kind:'absence',student_id:id(3),student_name:'QA child',created_at:stamp,read_at:null,event_date:'2026-11-06',source_id:id(11),status:'absent',title:'Attendance marked absent',assessment_id:null,occurred_at:null,delayed:false,...patch});
 function rpcClient(data:unknown,error:{code:string}|null=null){const abortSignal=vi.fn().mockResolvedValue({data,error});const rpc=vi.fn().mockReturnValue(Object.assign(Promise.resolve({data,error}),{abortSignal}));return {client:{rpc} as unknown as SupabaseClient,rpc,abortSignal};}
+describe('family attendance years and assigned teachers', () => {
+  const scope={user_id:id(1),school_id:id(2),student_id:id(3),role:'parent'};
+  const year={id:id(5),name:'2026–27',start_date:'2026-09-10',end_date:'2027-03-10'};
+  it('uses the verified school year context to offer past months and excludes future months',async()=>{
+    const remote=rpcClient({...scope,timezone:'Asia/Kolkata',server_today:'2026-11-10',years:[year]});
+    const signal=new AbortController().signal;
+    const result=await loadAttendanceYears(remote.client,access,'parent',child,signal);
+    expect(result.years).toEqual([year]);
+    expect(attendanceMonths(result.years[0],result.today)).toEqual(['2026-11-01','2026-10-01','2026-09-01']);
+    expect(remote.rpc).toHaveBeenCalledWith('get_family_attendance_report_context',{p_role:'parent',p_student_id:id(3)});
+    expect(remote.abortSignal).toHaveBeenCalledWith(signal);
+    const mismatched=rpcClient({...scope,student_id:id(8),timezone:'Asia/Kolkata',server_today:'2026-11-10',years:[year]});
+    await expect(loadAttendanceYears(mismatched.client,access,'parent',child)).rejects.toThrow('could not be verified');
+  });
+  it('shows scoped teacher labels only and distinguishes unavailable service from unassigned classes',async()=>{
+    const item={id:id(10),name:'Teacher A',is_class_teacher:true,subjects:['Mathematics'],registered_mobile:'private'};
+    const data={...scope,academic_year_name:'2026–27',class_name:'Grade 6',section_name:'A',teachers:[item]};
+    const remote=rpcClient(data);
+    expect(await loadClassTeachers(remote.client,access,'parent',child)).toEqual({year:'2026–27',className:'Grade 6',section:'A',teachers:[
+      {id:id(10),name:'Teacher A',isClassTeacher:true,subjects:['Mathematics']},
+    ]});
+    expect(remote.rpc).toHaveBeenCalledWith('get_family_class_teachers',{p_role:'parent',p_student_id:id(3)});
+    await expect(loadClassTeachers(rpcClient(null,{code:'PGRST202'}).client,access,'parent',child)).rejects.toThrow('not available');
+    await expect(loadClassTeachers(rpcClient(null,{code:'42501'}).client,access,'parent',child)).rejects.toThrow('family access');
+    for(const patch of [{school_id:id(9)},{role:'student'},{section_name:null},{teachers:[item,{...item,id:id(11)}]}]){
+      await expect(loadClassTeachers(rpcClient({...data,...patch}).client,access,'parent',child)).rejects.toThrow('could not be verified');
+    }
+    expect(await loadClassTeachers(rpcClient({...data,teachers:[]}).client,access,'parent',child)).toMatchObject({className:'Grade 6',teachers:[]});
+  });
+});
 const inbox=(notifications=[alert()], role: 'parent' | 'student' = 'parent')=>({user_id:id(1),role,notifications,unread_count:'3',next_cursor:null});
 describe('native shared notification contract',()=>{
   it('keeps server unread filtering, cursor precision, exact limits and AbortSignal',async()=>{

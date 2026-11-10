@@ -1,15 +1,16 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { Alert, Linking, View } from 'react-native';
+import { Alert, View } from 'react-native';
 import { Bell, CheckCheck } from 'lucide-react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useAuth } from '../../auth/provider';
-import { loadFamilyNotificationInbox, markAllFamilyNotificationsRead, markFamilyNotificationRead, type FamilyNotification, type FamilyNotificationCursor } from '../../data';
-import { Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
-import { useLoad } from '../../ui/use-load';
-import { usePalette } from '../../ui/theme';
-import { useFamily } from '../../ui/family';
-import { ExamSchedule } from '../../ui/exam-schedule';
-import { GateAlertPreferences } from '../../ui/gate-alert-preferences';
+import { useAuth } from '../../../auth/provider';
+import { subscribePushInboxRefresh } from '../../../push';
+import { loadFamilyNotificationInbox, markAllFamilyNotificationsRead, markFamilyNotificationRead, type FamilyNotification, type FamilyNotificationCursor } from '../../../data';
+import { Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../../ui/primitives';
+import { useLoad } from '../../../ui/use-load';
+import { usePalette } from '../../../ui/theme';
+import { useFamily } from '../../../ui/family';
+import { ExamSchedule } from '../../../ui/exam-schedule';
+import { GateAlertPreferences } from '../../../ui/gate-alert-preferences';
 
 const labels = {
   absence: ['Attendance', 'View attendance'],
@@ -18,10 +19,10 @@ const labels = {
   gate_exit: ['Exit', 'View attendance'],
   result_published: ['Result', 'View published result'],
   leave_decision: ['Leave', 'View leave decision'],
-  announcement: ['Announcement', 'Open in SMS Web'],
-  homework_assigned: ['Homework', 'Open in SMS Web'],
-  fee_due: ['Fee reminder', 'Open in SMS Web'],
-  fee_payment: ['Fee payment', 'Open in SMS Web'],
+  announcement: ['Announcement', null],
+  homework_assigned: ['Homework', 'View homework'],
+  fee_due: ['Fee reminder', null],
+  fee_payment: ['Fee payment', null],
   exam_schedule: ['Exam scheduled', 'View exam schedule'],
 } as const;
 const gateTime = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
@@ -40,6 +41,8 @@ function NotificationsInbox() {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const read = useCallback((signal: AbortSignal) => loadFamilyNotificationInbox(client!, { userId: access!.userId, role, unreadOnly: unread, cursor }, signal), [access, role, unread, cursor, client]);
   const inbox = useLoad(`${access?.userId}:${role}:${unread}:${cursor?.id}`, read);
+  const { reload } = inbox, userId = access?.userId;
+  useEffect(() => userId ? subscribePushInboxRefresh({ userId, role }, reload) : undefined, [userId, role, reload]);
   async function mark(row: FamilyNotification) {
     if (!alive.current) return;
     setBusy(true); setError('');
@@ -60,11 +63,15 @@ function NotificationsInbox() {
       } },
     ]);
   }
-  async function open(row: FamilyNotification) {
+  function open(row: FamilyNotification) {
     if (!alive.current) return;
     const { kind, student_id: child, source_id: source } = row;
     if (kind === 'exam_schedule') {
       router.setParams({ assessment: source });
+      return;
+    }
+    if (kind === 'homework_assigned') {
+      router.push({ pathname: '/(school)/homework', params: { activity: source } });
       return;
     }
     if (child && !family.children.some(pupil => pupil.id === child)) {
@@ -82,24 +89,9 @@ function NotificationsInbox() {
         return;
       }
       if (kind === 'absence' || kind === 'late' || kind === 'gate_arrival' || kind === 'gate_exit') {
-        router.push('/(school)/attendance');
+        router.navigate('/(school)/(tabs)/attendance');
         return;
       }
-    }
-    const params = new URLSearchParams();
-    if (role === 'parent') params.set('view', 'guardian');
-    if (child) params.set('child', child);
-    const target = {
-      announcement: ['notices', 'notice'],
-      homework_assigned: ['homework', 'activity'],
-      fee_due: ['invoices', 'fee'],
-      fee_payment: ['invoices', 'payment'],
-    } as const;
-    if (kind === 'announcement' || kind === 'homework_assigned' || kind === 'fee_due' || kind === 'fee_payment') {
-      const [path, key] = target[kind];
-      params.set(key, source);
-      try { await Linking.openURL(`https://sms-web-shoaibhasann.vercel.app/modules/${path}?${params}`); }
-      catch { if (alive.current) setError('SMS Web could not be opened. Try again.'); }
     }
   }
   return <Screen><Title title="School updates" subtitle="Attendance, exam schedules and other school alerts. Read status belongs to your account." />
@@ -110,12 +102,15 @@ function NotificationsInbox() {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}><Bell size={20} color={p.primary} /><Text style={{ flex: 1, fontWeight: '600' }}>{inbox.data.unread_count} unread</Text></View>
       <Button label="Mark all as read" secondary disabled={busy || inbox.data.unread_count === 0} onPress={markAll} icon={<CheckCheck size={19} color={p.text} />} />
       {!inbox.data.notifications.length && <Card><Text>{unread ? 'You’re all caught up.' : 'No school updates are available.'}</Text></Card>}
-      {inbox.data.notifications.map(row => <Card key={`${row.kind}:${row.id}`}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: p.primary, fontSize: 12, fontWeight: '700' }}>{row.kind === 'exam_schedule' && row.status === 'rescheduled' ? 'Exam schedule updated' : labels[row.kind][0]}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.read_at ? 'Read' : 'Unread'}</Text></View>
-        <Text accessibilityRole="header" style={{ fontSize: 17, lineHeight: 26, fontWeight: '600' }}>{row.title}</Text>{row.student_name && <Text>{row.student_name}</Text>}<Text style={{ color: p.muted, fontSize: 12 }}>{row.occurred_at ? `${gateTime.format(new Date(row.occurred_at))} IST${row.delayed ? ' · Delayed scan' : ''}` : row.event_date}</Text>
-        <Button label={labels[row.kind][1]} secondary onPress={() => void open(row)} />
+      {inbox.data.notifications.map(row => {
+        const [label, action] = labels[row.kind];
+        return <Card key={`${row.kind}:${row.id}`}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: p.primary, fontSize: 12, fontWeight: '700' }}>{row.kind === 'exam_schedule' && row.status === 'rescheduled' ? 'Exam schedule updated' : label}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.read_at ? 'Read' : 'Unread'}</Text></View>
+        <Text accessibilityRole="header" style={{ fontSize: 17, lineHeight: 26, fontWeight: '600' }}>{row.title}</Text>{family.children.length > 1 && row.student_name && <Text>{row.student_name}</Text>}<Text style={{ color: p.muted, fontSize: 12 }}>{row.occurred_at ? `${gateTime.format(new Date(row.occurred_at))} IST${row.delayed ? ' · Delayed scan' : ''}` : row.event_date}</Text>
+        {action && <Button label={action} secondary onPress={() => open(row)} />}
         {!row.read_at && <Button label="Mark as read" secondary disabled={busy} onPress={() => void mark(row)} />}
-      </Card>)}
+      </Card>;
+      })}
       {inbox.data.next_cursor && <Button label="Older updates" secondary onPress={() => setCursor(inbox.data!.next_cursor)} />}
       {cursor && <Button label="Latest updates" secondary onPress={() => setCursor(null)} />}
     </>}

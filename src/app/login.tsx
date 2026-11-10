@@ -5,7 +5,8 @@ import { Redirect } from 'expo-router';
 import { ArrowRight, CircleAlert, Eye, EyeOff, LockKeyhole, Mail } from 'lucide-react-native';
 import { useAuth } from '../auth/provider';
 import { configError } from '../auth/client';
-import { Button, ErrorCard, Screen, Skeleton, Text } from '../ui/primitives';
+import { Screen, Skeleton, Text } from '../ui/primitives';
+import { AuthProblem } from '../ui/auth-problem';
 import { usePalette } from '../ui/theme';
 import { MfaVerification } from '../ui/mfa-verification';
 
@@ -20,10 +21,10 @@ export default function Login() {
     const closed = Keyboard.addListener('keyboardDidHide', () => setKeyboard(false));
     return () => { opened.remove(); closed.remove(); };
   }, []);
-  if (auth.status === 'ready') return <Redirect href="/(school)" />;
+  if (auth.status === 'ready' && auth.foreground) return <Redirect href="/(school)" />;
   if (auth.status === 'mfa' && auth.foreground) return <MfaVerification />;
-  if (auth.status === 'checking') return <Screen><Skeleton /></Screen>;
-  if (auth.status === 'error') return <Screen><ErrorCard message={auth.error || 'School access could not be confirmed.'} retry={auth.refresh} />{!configError && <Button label="Sign out" secondary onPress={() => void auth.signOut().catch(() => {})} />}</Screen>;
+  if (auth.status === 'error') return <AuthProblem />;
+  if (auth.status !== 'signedOut') return <Screen><Skeleton /></Screen>;
   async function submit() {
     if (submitting.current || configError) return;
     submitting.current = true; setBusy(true); setError('');
@@ -52,13 +53,13 @@ export default function Login() {
             <View style={{ gap: 8 }}>
               <Text nativeID="email-label" style={styles.label}>Email address</Text>
               <View style={field('email')}><Mail size={19} strokeWidth={1.7} color={focused === 'email' ? p.primary : p.muted} />
-                <TextInput accessibilityLabel="Email address" accessibilityLabelledBy="email-label" autoComplete="email" textContentType="username" importantForAutofill="yes" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} editable={!busy} value={email} onChangeText={setEmail} style={input} placeholder="you@school.com" placeholderTextColor={p.muted} underlineColorAndroid="transparent" returnKeyType="next" onSubmitEditing={() => passwordInput.current?.focus()} onFocus={() => setFocused('email')} onBlur={() => setFocused(null)} />
+                <TextInput accessibilityLabel="Email address" accessibilityLabelledBy="email-label" autoComplete="username" importantForAutofill="yes" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} editable={!busy} value={email} onChangeText={setEmail} style={input} placeholder="you@school.com" placeholderTextColor={p.muted} underlineColorAndroid="transparent" returnKeyType="next" onSubmitEditing={() => passwordInput.current?.focus()} onFocus={() => setFocused('email')} onBlur={() => setFocused(null)} />
               </View>
             </View>
             <View style={{ gap: 8 }}>
               <View style={styles.passwordHeading}><Text nativeID="password-label" style={styles.label}>Password</Text><Pressable accessibilityRole="link" accessibilityLabel="Forgot password? Opens the SMS website" disabled={busy} hitSlop={4} onPress={() => void recover()} style={styles.recovery}><Text style={{ color: p.primary, fontWeight: '500', fontSize: 12, lineHeight: 20 }}>Forgot password?</Text></Pressable></View>
               <View style={field('password')}><LockKeyhole size={19} strokeWidth={1.7} color={focused === 'password' ? p.primary : p.muted} />
-                <TextInput ref={passwordInput} accessibilityLabel="Password" accessibilityLabelledBy="password-label" autoComplete="current-password" textContentType="password" importantForAutofill="yes" secureTextEntry={!show} autoCapitalize="none" autoCorrect={false} editable={!busy} value={password} onChangeText={setPassword} style={input} placeholder="Enter your password" placeholderTextColor={p.muted} underlineColorAndroid="transparent" onSubmitEditing={() => void submit()} returnKeyType="go" onFocus={() => setFocused('password')} onBlur={() => setFocused(null)} />
+                <TextInput ref={passwordInput} accessibilityLabel="Password" accessibilityLabelledBy="password-label" autoComplete="current-password" importantForAutofill="yes" secureTextEntry={!show} autoCapitalize="none" autoCorrect={false} editable={!busy} value={password} onChangeText={setPassword} style={input} placeholder="Enter your password" placeholderTextColor={p.muted} underlineColorAndroid="transparent" onSubmitEditing={() => void submit()} returnKeyType="go" onFocus={() => setFocused('password')} onBlur={() => setFocused(null)} />
                 <Pressable accessibilityRole="button" accessibilityLabel={show ? 'Hide password' : 'Show password'} accessibilityState={{ disabled: busy, checked: show }} disabled={busy} onPress={() => setShow(value => !value)} style={({ pressed }) => [styles.reveal, { opacity: pressed ? 0.6 : 1 }]}>{show ? <EyeOff color={p.muted} size={20} strokeWidth={1.7} /> : <Eye color={p.muted} size={20} strokeWidth={1.7} />}</Pressable>
               </View>
             </View>

@@ -2,7 +2,7 @@
 import { act, type EffectCallback, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import Account from '../src/app/(school)/account';
+import Account from '../src/app/(school)/(tabs)/account';
 
 const { auth, readPermission, readEnrollment, enable, disconnect, openSettings, confirm, rpc } = vi.hoisted(() => ({
   auth: { access: { userId: 'qa-user', name: 'QA User', roles: ['student'] }, role: 'student', revision: 0 },
@@ -19,14 +19,14 @@ vi.mock('expo-router', async () => {
   return { useFocusEffect: (effect: EffectCallback) => useEffect(effect, [effect]) };
 });
 vi.mock('react-native', () => ({
-  Alert: { alert: confirm }, Linking: { openSettings }, View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  Alert: { alert: confirm }, Linking: { openSettings }, Switch: () => null, View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock('../src/push', async () => ({
   NativePushError: (await import('../src/push/core')).NativePushError,
   getPushAvailability: () => ({ available: true }), readNativePushPermission: readPermission, readPushEnrollment: readEnrollment,
   enableNativePush: enable, disconnectNativePush: disconnect,
 }));
-vi.mock('../src/ui/theme', () => ({ usePalette: () => ({ muted: '#64748b' }) }));
+vi.mock('../src/ui/theme', () => ({ usePalette: () => ({ muted: '#64748b' }), useDarkMode: () => ({ darkMode: false, setDarkMode: vi.fn() }) }));
 vi.mock('../src/ui/primitives', () => ({
   Card: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   Screen: ({ children }: { children?: ReactNode }) => <main>{children}</main>,
@@ -79,5 +79,14 @@ describe('phone notification settings', () => {
     await render();
     expect(container.textContent).toContain('On for this phone');
     expect(button('Open Android settings')).toBeUndefined();
+  });
+  it('asks to reconnect after the Firebase installation changes and shows On only after verification', async () => {
+    readEnrollment.mockResolvedValueOnce({ ...registration, state: 'pending', needsReconnect: true });
+    await render();
+    expect(container.textContent).toContain('Off for this phone');
+    expect(button('Reconnect notifications')).toBeDefined();
+    await act(async () => { button('Reconnect notifications')!.click(); });
+    expect(enable).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain('On for this phone');
   });
 });

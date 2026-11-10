@@ -31,12 +31,12 @@ export function GateAlertPreferences({ client, userId, onChanged }: { client: Su
     </Card>
     {settings.loading ? <Skeleton rows={1} /> : settings.error ? <ErrorCard message={settings.error} retry={refresh} />
       : settings.data?.length === 0 ? <Card><Text>No linked children with attendance access are available.</Text></Card>
-        : settings.data?.map(row => <GatePreference key={`${userId}:${row.preference_id}:${row.version}`} client={client} userId={userId} initial={row}
+        : settings.data?.map((row, _, rows) => <GatePreference key={`${userId}:${row.preference_id}:${row.version}`} client={client} userId={userId} initial={row} showStudentName={rows.length > 1}
           onChanged={onChanged} onBusy={changedBusy} locked={busy} onAccessChanged={settings.reload} />)}
   </View>;
 }
 
-function GatePreference({ client, userId, initial, onChanged, onBusy, onAccessChanged, locked }: { client: SupabaseClient; userId: string; initial: GateAlertPreference;
+function GatePreference({ client, userId, initial, showStudentName, onChanged, onBusy, onAccessChanged, locked }: { client: SupabaseClient; userId: string; initial: GateAlertPreference; showStudentName: boolean;
   onChanged(): void; onBusy(id: string, busy: boolean): boolean; onAccessChanged(): void; locked: boolean }) {
   const p = usePalette(), [current, setCurrent] = useState(initial);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -62,7 +62,7 @@ function GatePreference({ client, userId, initial, onChanged, onBusy, onAccessCh
     }
   }
   return <Card>
-    <Text accessibilityRole="header" style={{ fontWeight: '700' }}>{current.student_name}</Text>
+    {showStudentName && <Text accessibilityRole="header" style={{ fontWeight: '700' }}>{current.student_name}</Text>}
     {(['arrival_enabled', 'exit_enabled'] as const).map(field => <View key={field} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <Text>{field === 'arrival_enabled' ? 'Arrival' : 'Exit'}</Text>
       <Switch accessibilityLabel={`${field === 'arrival_enabled' ? 'Arrival' : 'Exit'} alerts for ${current.student_name}`}

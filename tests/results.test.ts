@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listChildren, type FamilyAccess, type FamilyChild } from '../src/data/family';
 import { getFamilyAssessmentResults, getFamilyNotificationResult, type FamilyAssessmentResult, type PublicationMetadata } from '../src/data/results';
+import { summarizePublishedResults } from '../src/data/academic-analysis';
 
 vi.mock('../src/data/family', () => ({ listChildren: vi.fn() }));
 const id = (n: number) => `51000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -26,6 +27,20 @@ function client(data: unknown, error: { code: string; message?: string } | null 
   return { client: { rpc } as unknown as SupabaseClient, rpc, abortSignal };
 }
 beforeEach(() => { vi.mocked(listChildren).mockReset().mockResolvedValue([child]); });
+
+describe('native subject comparisons', () => {
+  it('uses assessment dates and keeps comparisons within one subject and academic year', () => {
+    const latest = row({ percentage: 85 });
+    const prior = row({ percentage: 70, metadata: metadata({ assessment_date: '2026-10-10' }), published_at: '2026-11-07T09:00:00Z' });
+    const sameDay = row({ percentage: 100, published_at: '2026-11-06T14:00:00Z' });
+    const otherSubject = row({ percentage: 0, metadata: metadata({ subject_id: id(11), subject_name: 'English' }) });
+    const priorYear = row({ percentage: 50, metadata: metadata({ academic_year_id: id(12), academic_year_name: '2025–26', assessment_date: '2026-02-10' }) });
+    const input = [prior, priorYear, latest, otherSubject, sameDay];
+    expect(summarizePublishedResults(input)).toEqual({ year: '2026–27', subjects: [{ latest, previous: prior }, { latest: otherSubject, previous: null }] });
+    expect(input[0]).toBe(prior);
+    expect(summarizePublishedResults([])).toBeNull();
+  });
+});
 
 describe('native latest published result boundary', () => {
   it('checks fresh family/child scope before fetching the complete 50-row history page', async () => {

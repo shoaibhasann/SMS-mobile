@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useAuth } from '../auth/provider';
 import { getFamilyExamSchedule } from '../data';
-import { Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from './primitives';
+import { BackArrow, Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from './primitives';
 import { useLoad } from './use-load';
 
 const dateFormat = new Intl.DateTimeFormat('en-IN', { dateStyle: 'long', timeZone: 'Asia/Kolkata' });
@@ -12,8 +12,8 @@ export function ExamSchedule({ assessment, back }: { assessment: string | string
   const exam = useLoad(JSON.stringify([access?.userId, role, revision, assessment]), load);
 
   return <Screen>
+    <BackArrow onPress={back} />
     <Title title="Exam schedule" subtitle="Current date and instructions from your school." />
-    <Button label="Back to updates" secondary onPress={back} />
     {exam.loading ? <Skeleton /> : exam.error ? <ErrorCard message={exam.error} retry={exam.reload} /> : exam.data
       ? <Card>
         <Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 20 }}>{exam.data.name}</Text>

@@ -93,6 +93,27 @@ export async function listHomework(client: SupabaseClient, access: FamilyAccess,
   if (new Set(rows.map(row => row.id)).size !== rows.length) throw invalid();
   return { rows, total: result.count, offset };
 }
+
+export async function listHomeworkStatuses(client: SupabaseClient, role: FamilyRole, child: FamilyChild, rows: HomeworkActivity[], signal?: AbortSignal) {
+  const ids = new Set(rows.map(row => row.id));
+  const statuses = new Map<string, HomeworkSubmission['status']>();
+  if (!ids.size) return statuses;
+  if (ids.size > homeworkPageSize || !homeworkUuid(child.id) || rows.some(row => row.schoolId !== child.school_id || !homeworkUuid(row.id))) throw invalid();
+  const query = role === 'student' ? client.rpc('list_my_homework_submissions', { p_activity_ids: [...ids] })
+    : client.from('activity_submissions').select('activity_id,student_id,status').eq('student_id', child.id).in('activity_id', [...ids]);
+  const result = await (signal ? query.abortSignal(signal) : query);
+  homeworkCancelled(signal);
+  if (result.error) throw result.error;
+  if (!Array.isArray(result.data) || result.data.length > ids.size) throw invalid();
+  for (const value of result.data) {
+    const row = record(value);
+    if (row.student_id !== child.id || typeof row.activity_id !== 'string' || !ids.has(row.activity_id)
+      || statuses.has(row.activity_id) || (row.status !== 'submitted' && row.status !== 'graded')) throw invalid();
+    statuses.set(row.activity_id, row.status);
+  }
+  return statuses;
+}
+
 export async function getHomework(client: SupabaseClient, access: FamilyAccess, role: FamilyRole, child: FamilyChild, id: string, signal?: AbortSignal): Promise<HomeworkActivity> {
   if (!homeworkUuid(id)) throw invalid();
   const scope = await placement(client, access, role, child, signal);

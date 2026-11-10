@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Animated, AccessibilityInfo, Pressable, ScrollView, StyleSheet, Text as NativeText, View, type TextProps, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ArrowLeft } from 'lucide-react-native';
 import { usePalette } from './theme';
 
 export function Text({ style, ...props }: TextProps) {
@@ -18,12 +19,19 @@ export function Button({ label, onPress, disabled, secondary = false, icon }: { 
 export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const p = usePalette(); return <View style={[{ padding: 18, gap: 12, backgroundColor: p.surface, borderWidth: 1, borderColor: p.border, borderRadius: 20 }, style]}>{children}</View>;
 }
+export function BackArrow({ onPress, disabled = false }: { onPress(): void; disabled?: boolean }) {
+  const p = usePalette();
+  return <Pressable accessibilityRole="button" accessibilityLabel="Back" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => ({ alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44, width: 44, paddingStart: 2, marginBottom: -8, opacity: disabled || pressed ? 0.55 : 1 })}>
+    <ArrowLeft size={22} color={p.primary} />
+  </Pressable>;
+}
 export function Screen({ children, scroll = true }: { children: ReactNode; scroll?: boolean }) {
   const p = usePalette(); const content = <View style={styles.content}>{children}</View>;
   return <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: p.bg }}>{scroll ? <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 32 }}>{content}</ScrollView> : content}</SafeAreaView>;
 }
-export function Title({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
-  const p = usePalette(); return <View style={{ gap: 6, marginBottom: 4 }}><Text style={{ color: p.primary, fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>SMS · SCHOOL WORKSPACE</Text>
+export function Title({ title, subtitle, action, showWorkspace = false }: { title: string; subtitle?: string; action?: ReactNode; showWorkspace?: boolean }) {
+  const p = usePalette(); return <View style={{ gap: 6, marginBottom: 4 }}>{showWorkspace && <Text style={{ color: p.primary, fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>SMS · SCHOOL WORKSPACE</Text>}
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}><Text accessibilityRole="header" style={{ fontSize: 27, lineHeight: 36, fontWeight: '700', flex: 1 }}>{title}</Text>{action}</View>
     {subtitle && <Text style={{ color: p.muted }}>{subtitle}</Text>}</View>;
 }

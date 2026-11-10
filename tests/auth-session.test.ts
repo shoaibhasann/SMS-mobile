@@ -154,6 +154,15 @@ describe('Family account transitions', () => {
 });
 
 describe('AuthProvider session and identity boundary', () => {
+  it('offers a retry without sign-out when no session has been found', async () => {
+    native.setSession(null);
+    native.client.auth.getSession.mockRejectedValueOnce(new Error('Storage temporarily unavailable.'));
+    await mount();
+    expect(auth).toMatchObject({ status: 'error', recovery: null, access: null });
+    await act(async () => { auth.refresh(); });
+    expect(auth).toMatchObject({ status: 'signedOut', recovery: null, access: null });
+  });
+
   it('requires MFA before any family records load and rechecks after successful verification', async () => {
     native.mfa.mockResolvedValueOnce({ user_id: guardian.userId, required: true, allowed: false, action: 'challenge', current_aal: 'aal1', verified_totp_count: 1 });
     await mount(); expect(auth.status).toBe('mfa'); expect(auth.access).toBeNull(); expect(auth.client).toBeNull();
@@ -231,7 +240,7 @@ describe('AuthProvider session and identity boundary', () => {
     expect(auth.status).toBe('checking'); expect(auth.foreground).toBe(false); expect(auth.client).toBeNull();
     native.access.mockRejectedValueOnce(new Error('Network unavailable.'));
     await act(async () => { native.emitApp('active'); });
-    expect(auth.status).toBe('error'); expect(auth.access).toBeNull();
+    expect(auth.status).toBe('error'); expect(auth.access).toBeNull(); expect(auth.recovery).toBe('endSession');
     expect(native.cleanup).not.toHaveBeenCalled(); expect(native.disconnect).not.toHaveBeenCalled();
     const refreshed: Session = { ...sessionA, access_token: 'synthetic-refreshed-session-a' };
     native.client.auth.getSession.mockResolvedValue({ data: { session: refreshed }, error: null });
@@ -240,13 +249,43 @@ describe('AuthProvider session and identity boundary', () => {
     expect(auth.client).not.toBe(oldClient); expect(native.bound).toHaveBeenLastCalledWith(refreshed.access_token);
   });
 
+  it('keeps signed-out autofill fields mounted while Android opens and closes the credential picker', async () => {
+    native.setSession(null);
+    await mount(); expect(auth.status).toBe('signedOut');
+    const response = deferred<{ data: { session: null }; error: null }>();
+    native.client.auth.getSession.mockReturnValueOnce(response.promise);
+    act(() => native.emitApp('background'));
+    expect(auth.foreground).toBe(false); expect(auth.status).toBe('signedOut');
+    await act(async () => { native.emitApp('active'); });
+    expect(auth.foreground).toBe(true); expect(auth.status).toBe('signedOut');
+    expect(native.client.auth.getSession).toHaveBeenCalledTimes(2);
+    await act(async () => { response.resolve({ data: { session: null }, error: null }); });
+    expect(auth.status).toBe('signedOut'); expect(auth.client).toBeNull();
+    expect(native.cleanup).toHaveBeenCalledOnce(); expect(native.access).not.toHaveBeenCalled();
+    expect(native.client.auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it('still verifies an existing session discovered when a signed-out screen resumes', async () => {
+    native.setSession(null);
+    await mount(); expect(auth.status).toBe('signedOut');
+    act(() => native.emitApp('background'));
+    native.setSession(sessionA);
+    const access = deferred<FamilyAccess>();
+    native.access.mockReturnValueOnce(access.promise);
+    await act(async () => { native.emitApp('active'); });
+    expect(auth.status).toBe('checking'); expect(auth.client).toBeNull();
+    await act(async () => { access.resolve(guardian); });
+    expect(auth.status).toBe('ready'); expect(auth.access?.userId).toBe(guardian.userId);
+    expect(native.mfa).toHaveBeenCalledOnce();
+  });
+
   it('does not expose login on a cold signed-out start until saved native cleanup succeeds', async () => {
     native.client.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
     const cleanup = deferred<{ nativeCleared: boolean }>(); native.cleanup.mockReturnValueOnce(cleanup.promise);
     await mount(); expect(auth.status).toBe('checking');
     await expect(auth.signIn('new@example.test', 'password')).rejects.toThrow('securing this phone');
     await act(async () => { cleanup.resolve({ nativeCleared: false }); });
-    expect(auth.status).toBe('error'); expect(auth.client).toBeNull();
+    expect(auth.status).toBe('error'); expect(auth.client).toBeNull(); expect(auth.recovery).toBe('finishSignOut');
     expect(native.client.auth.signInWithPassword).not.toHaveBeenCalled();
     await act(async () => { await auth.signOut(); });
     expect(auth.status).toBe('signedOut'); expect(native.cleanup).toHaveBeenCalledTimes(2);

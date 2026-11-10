@@ -2,15 +2,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type PushRole = 'parent' | 'student';
 export type PushOwner = { userId: string; role: PushRole };
-export type PushEnrollment = { state: 'pending' | 'registered' | 'cleanup-required'; deviceId: string | null; generation: number | null };
+export type PushEnrollment = { state: 'pending' | 'registered' | 'cleanup-required'; deviceId: string | null; generation: number | null; needsReconnect?: true };
 export type PushArguments = PushOwner & { client: SupabaseClient };
 export type PushHint = 'received' | 'opened';
 export type PushPermission = 'granted' | 'prompt' | 'settings';
 export type PushDriver = {
   readPermission(): Promise<PushPermission>;
   requestPermission(): Promise<boolean>;
+  currentInstallationId(): Promise<string>;
   register(): Promise<string>;
   disconnect(): Promise<void>;
+  showForegroundHint(): void;
   listen(callback: (kind: PushHint, message: unknown) => void): Promise<() => void>;
 };
 export type PushDependencies = {
@@ -19,7 +21,7 @@ export type PushDependencies = {
   identity(): Promise<{ installationId: string; secret: string }>;
   driver(): Promise<PushDriver>;
 };
-type Binding = PushOwner & PushEnrollment & { version: 1; installationId: string; secret: string; fid: string | null };
+type Binding = PushOwner & Omit<PushEnrollment, 'needsReconnect'> & { version: 1; installationId: string; secret: string; fid: string | null };
 type Preferences = { enabled: boolean; absence: boolean; result_published: boolean; leave_decision: boolean; version: number };
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const fid = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/.test(value);
@@ -31,9 +33,9 @@ export class NativePushError extends Error {
 function owner(value: PushOwner) {
   if (!uuid(value.userId) || !['parent', 'student'].includes(value.role)) throw new NativePushError('Sign in with a verified family account.', 'access');
 }
-async function limited<T>(promise: PromiseLike<T>, milliseconds = 10_000): Promise<T> {
+async function limited<T>(promise: PromiseLike<T>, milliseconds = 10_000, message = 'The phone update timed out. Check your connection and try again.'): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new NativePushError('The phone update could not be confirmed. Retry before sharing this phone.', 'timeout')), milliseconds); })]); }
+  try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new NativePushError(message, 'timeout')), milliseconds); })]); }
   finally { clearTimeout(timer); }
 }
 function decode(raw: string | null): Binding | null {
@@ -53,6 +55,8 @@ export function isInboxHint(message: unknown) { return record(record(message).da
 export function createPushLifecycle(deps: PushDependencies) {
   let running: Promise<unknown> | null = null, nativePending: Promise<unknown> | null = null;
   let epoch = 0, cleanupBlocked = false, detach = () => {};
+  const inboxListeners = new Set<PushOwner & { reload(): void }>();
+  const registrationListeners = new Set<PushOwner & { changed(): void }>();
   const stopHints = () => { detach(); detach = () => {}; };
   const read = async () => decode(await deps.storage.read());
   const write = (binding: Binding) => deps.storage.write(JSON.stringify(binding));
@@ -72,10 +76,10 @@ export function createPushLifecycle(deps: PushDependencies) {
     const auth = await limited(args.client.auth.getUser(), 8_000);
     if (auth.error || auth.data.user?.id !== args.userId || auth.data.user.is_anonymous) throw new NativePushError('Your sign-in changed. Sign in again before managing phone alerts.', 'access');
   }
-  async function nativeCall<T>(work: Promise<T>): Promise<T> {
+  async function nativeCall<T>(work: Promise<T>, milliseconds?: number, message?: string): Promise<T> {
     const pending = Promise.resolve(work); nativePending = pending;
     void pending.finally(() => { if (nativePending === pending) nativePending = null; }).catch(() => {});
-    return limited(pending);
+    return limited(pending, milliseconds, message);
   }
   function getPushAvailability(configured: boolean) {
     return !configured ? { available: false, reason: 'Native push is not configured for this build.' }
@@ -87,12 +91,19 @@ export function createPushLifecycle(deps: PushDependencies) {
     const driver = await limited(deps.driver());
     return limited(driver.readPermission());
   }
-  async function readPushEnrollment(args: PushOwner): Promise<PushEnrollment | null> {
+  async function readPushEnrollment(args: PushOwner & { configured: boolean }): Promise<PushEnrollment | null> {
     owner(args);
     // Android's permission dialog can remount the screen before enrollment finishes.
     await running?.catch(() => {});
-    const binding = await read();
-    return binding && sameOwner(binding, args) ? { state: binding.state, deviceId: binding.deviceId, generation: binding.generation } : null;
+    const expected = epoch, binding = await read(); current(expected);
+    if (!binding || !sameOwner(binding, args)) return null;
+    const local = { state: binding.state, deviceId: binding.deviceId, generation: binding.generation };
+    if (binding.state !== 'registered' || !getPushAvailability(args.configured).available) return local;
+    const driver = await limited(deps.driver()); current(expected);
+    while (nativePending) { await limited(nativePending); current(expected); }
+    const installation = await nativeCall(driver.currentInstallationId()); current(expected);
+    if (!fid(installation)) throw new NativePushError('Phone registration could not be verified. Try again.', 'response');
+    return installation === binding.fid ? local : { ...local, state: 'pending', needsReconnect: true };
   }
   async function enableNativePush(args: PushArguments & { configured: boolean; label: string }) {
     if (running) throw new NativePushError('A phone update is already in progress. Wait for it to finish.', 'busy');
@@ -101,6 +112,7 @@ export function createPushLifecycle(deps: PushDependencies) {
     owner(args);
     if (!args.label.trim() || Array.from(args.label.trim()).length > 80) throw new NativePushError('Choose a phone name between 1 and 80 characters.', 'validation');
     const expected = ++epoch; stopHints();
+    let registrationSaved = false;
     const task = (async () => {
       if (cleanupBlocked) throw new NativePushError('Disconnect the previous phone registration before enabling alerts.', 'cleanup');
       if (nativePending) throw new NativePushError('Phone registration is still finishing. Try again shortly.', 'cleanup');
@@ -128,7 +140,8 @@ export function createPushLifecycle(deps: PushDependencies) {
         binding = { version: 1, userId: args.userId, role: args.role, ...identity, fid: null, deviceId: null, generation: null, state: 'pending' };
         await write(binding); current(expected);
       }
-      const nextFid = await nativeCall(driver.register()); current(expected);
+      const nextFid = await nativeCall(driver.register(), 25_000,
+        'Phone registration is taking longer than usual. Check your connection and try again.'); current(expected);
       if (!fid(nextFid)) throw new NativePushError('Firebase installation registration could not be verified.', 'response');
       binding.fid = nextFid; binding.state = 'pending'; await write(binding); current(expected);
       let result: unknown;
@@ -153,12 +166,18 @@ export function createPushLifecycle(deps: PushDependencies) {
             && Number.isSafeInteger(confirmed.version) && Number(confirmed.version) >= preferences.version;
         } catch { current(expected); }
       }
+      registrationSaved = true;
       return { deviceId: binding.deviceId, generation: binding.generation, preferencesEnabled };
     })();
     running = task;
     try { return await task; }
     catch (error) { throw error instanceof NativePushError ? error : new NativePushError('The phone update could not be confirmed. Retry or disconnect before sharing this phone.', 'native'); }
-    finally { if (running === task) running = null; }
+    finally {
+      if (running === task) {
+        running = null;
+        if (registrationSaved && expected === epoch) for (const listener of registrationListeners) if (sameOwner(args, listener)) listener.changed();
+      }
+    }
   }
   async function disconnect(args: PushArguments | null) {
     ++epoch; stopHints(); const previous = running;
@@ -190,6 +209,16 @@ export function createPushLifecycle(deps: PushDependencies) {
     const result = await disconnect(null);
     return { nativeCleared: result.nativeCleared };
   }
+  function subscribePushInboxRefresh(args: PushOwner, reload: () => void) {
+    const listener = { ...args, reload };
+    inboxListeners.add(listener);
+    return () => { inboxListeners.delete(listener); };
+  }
+  function subscribePushRegistration(args: PushOwner, changed: () => void) {
+    const listener = { ...args, changed };
+    registrationListeners.add(listener);
+    return () => { registrationListeners.delete(listener); };
+  }
   async function attachPushInboxHints(args: PushOwner & { configured: boolean; onInboxHint(kind: PushHint): void }) {
     if (!getPushAvailability(args.configured).available) return () => {};
     await running?.catch(() => {});
@@ -199,10 +228,19 @@ export function createPushLifecycle(deps: PushDependencies) {
     if (!binding || !sameOwner(binding, args) || binding.state !== 'registered' || expected !== epoch) return () => {};
     const driver = await deps.driver();
     if (expected !== epoch) return () => {};
-    const unsubscribe = await driver.listen((kind, message) => { if (epoch === expected && isInboxHint(message)) args.onInboxHint(kind); });
-    if (expected !== epoch) { unsubscribe(); return () => {}; }
-    stopHints(); detach = unsubscribe;
-    return () => { unsubscribe(); if (detach === unsubscribe) detach = () => {}; };
+    let active = true;
+    const unsubscribe = await driver.listen((kind, message) => {
+      if (!active || epoch !== expected || !isInboxHint(message)) return;
+      args.onInboxHint(kind);
+      for (const listener of inboxListeners) if (sameOwner(args, listener)) listener.reload();
+      if (kind === 'received') void driver.readPermission().then(permission => {
+        if (active && epoch === expected && permission === 'granted') driver.showForegroundHint();
+      }).catch(() => {});
+    });
+    const stop = () => { if (active) { active = false; unsubscribe(); } };
+    if (expected !== epoch) { stop(); return () => {}; }
+    stopHints(); detach = stop;
+    return () => { stop(); if (detach === stop) detach = () => {}; };
   }
-  return { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints };
+  return { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints, subscribePushInboxRefresh, subscribePushRegistration };
 }

@@ -75,6 +75,7 @@ describe('native gate preference UI behavior', () => {
     save.mockRejectedValueOnce(new GateAlertError('Current child access is required.', 'access'));
     await render(); await toggle('Arrival alerts for First pupil', true);
     expect(load).toHaveBeenCalledTimes(2); expect(container.textContent).not.toContain('First pupil');
+    expect(container.textContent).not.toContain('Second pupil');
     expect(checkbox('Arrival alerts for First pupil')).toBeNull(); expect(checkbox('Arrival alerts for Second pupil').disabled).toBe(false);
     expect(changed).toHaveBeenCalledTimes(1);
   });

@@ -7,7 +7,8 @@ import { readMfaStatus, verifyMfa, type MfaStatus } from './mfa';
 import { readFamilyAccess, type FamilyAccess, type FamilyRole } from '../data';
 import { cleanupSavedPushOnAuthLoss, disconnectNativePush } from '../push';
 
-type AccessState = { status: 'checking' | 'signedOut' | 'ready' | 'error' | 'mfa'; access: FamilyAccess | null; client: SupabaseClient | null; error: string | null; mfa: MfaStatus | null };
+type Recovery = 'endSession' | 'finishSignOut' | null;
+type AccessState = { status: 'checking' | 'signedOut' | 'ready' | 'error' | 'mfa'; access: FamilyAccess | null; client: SupabaseClient | null; error: string | null; recovery: Recovery; mfa: MfaStatus | null };
 type Owner = { userId: string; schoolId: string; role: FamilyRole; client: SupabaseClient };
 type Auth = AccessState & {
   role: FamilyRole; revision: number; foreground: boolean;
@@ -16,7 +17,7 @@ type Auth = AccessState & {
   verifyAuthenticator(factorId: string, code: string): Promise<void>;
 };
 const Context = createContext<Auth | null>(null);
-const empty = (status: AccessState['status'], error: string | null = null): AccessState => ({ status, access: null, client: null, error, mfa: null });
+const empty = (status: AccessState['status'], error: string | null = null, recovery: Recovery = null): AccessState => ({ status, access: null, client: null, error, recovery, mfa: null });
 const disconnect = (owner: Owner) => disconnectNativePush({ client: owner.client, userId: owner.userId, role: owner.role });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -28,6 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const owner = useRef<Owner | null>(null);
   const mfaWork = useRef<AbortController | null>(null);
   const mounted = useRef(true), signedOut = useRef(false), pushCleared = useRef(false);
+  const hasCleanSignOut = useCallback(() => signedOut.current && pushCleared.current
+    && !owner.current && !gate.running && !gate.blocked, [gate]);
   const clear = useCallback(() => {
     gate.invalidate();
     if (!mounted.current) return;
@@ -38,6 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signedOut.current = true;
     gate.invalidate();
     if (!mounted.current || gate.running) return;
+    if (hasCleanSignOut()) {
+      setState(current => current.status === 'signedOut' ? current : empty('signedOut'));
+      return;
+    }
     setState(empty('checking'));
     void gate.run('authLoss', async () => {
       if (!pushCleared.current && !(await cleanupSavedPushOnAuthLoss()).nativeCleared) {
@@ -51,9 +58,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         else clear();
       }
     }).catch(() => {
-      if (mounted.current) setState(empty('error', 'Phone notification cleanup could not be confirmed. Retry signing out before sharing this phone.'));
+      if (mounted.current) setState(empty('error', 'Could not disconnect school alerts from this phone. Finish signing out to continue.', 'finishSignOut'));
     });
-  }, [clear, gate]);
+  }, [clear, gate, hasCleanSignOut]);
 
   useEffect(() => {
     mounted.current = true;
@@ -65,24 +72,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     const subscription = AppState.addEventListener('change', next => {
       setForeground(next === 'active');
-      if (next === 'active') { client.auth.startAutoRefresh(); clear(); }
-      else { mfaWork.current?.abort(); gate.invalidate(); client.auth.stopAutoRefresh(); if (!gate.blocked) setState(empty('checking')); }
+      // Android's autofill picker backgrounds the app and needs the signed-out inputs to stay mounted.
+      const keepLogin = hasCleanSignOut();
+      if (next === 'active') {
+        client.auth.startAutoRefresh();
+        if (keepLogin) {
+          gate.invalidate();
+          setRevision(value => value + 1);
+        } else clear();
+      } else {
+        mfaWork.current?.abort();
+        gate.invalidate();
+        client.auth.stopAutoRefresh();
+        if (!keepLogin && !gate.blocked) setState(empty('checking'));
+      }
     });
     if (AppState.currentState === 'active') client.auth.startAutoRefresh();
     return () => { mounted.current = false; mfaWork.current?.abort(); gate.invalidate(); listener.subscription.unsubscribe(); subscription.remove(); client.auth.stopAutoRefresh(); };
-  }, [clear, confirmSignedOut, gate]);
+  }, [clear, confirmSignedOut, gate, hasCleanSignOut]);
 
   useEffect(() => {
     if (configError || !foreground) return;
     const current = gate.beginRead();
     if (!current) return;
     const controller = new AbortController();
+    let hasSession = owner.current !== null;
     void (async () => {
       const { data, error } = await schoolClient().auth.getSession();
       if (!current() || controller.signal.aborted) return;
       if (error) throw error;
       const snapshot = data.session;
       if (!snapshot) { confirmSignedOut(); return; }
+      hasSession = true;
+      if (signedOut.current) setState(empty('checking'));
       signedOut.current = false; pushCleared.current = false;
       const client = familyClient(snapshot.access_token);
       const mfa = await readMfaStatus(client, snapshot.user.id, controller.signal);
@@ -98,10 +120,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('Account context changed.');
       }
       owner.current = { userId: access.userId, schoolId: access.schoolId, role: nextRole, client };
-      setRole(nextRole); setState({ status: 'ready', access, client, error: null, mfa: null });
+      setRole(nextRole); setState({ status: 'ready', access, client, error: null, recovery: null, mfa: null });
     })().catch(() => {
       if (mounted.current && !controller.signal.aborted && current()) setState(empty('error',
-        'School access could not be verified. Check your connection and retry, or sign out before changing workspaces.'));
+        'Could not verify school access. Check your connection and try again.', hasSession ? 'endSession' : null));
     });
     return () => controller.abort();
   }, [revision, foreground, role, gate, confirmSignedOut]);
@@ -109,11 +131,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signIn(email: string, password: string) {
     if (!email.trim() || !password) throw new Error('Enter your school email and password.');
     if (!signedOut.current || !pushCleared.current) throw new Error('Sign out to finish securing this phone before signing in.');
+    let foundSavedSession = false;
     try {
       await gate.run('signIn', async () => {
         clear();
         const saved = await schoolClient().auth.getSession();
         if (saved.error || saved.data.session) {
+          foundSavedSession = !!saved.data.session;
           signedOut.current = false; pushCleared.current = false;
           throw new Error('An existing sign-in could not be ruled out. Sign out and retry.');
         }
@@ -124,7 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clear();
     } catch (error) {
       if (!(error instanceof SessionTransitionError) && mounted.current) setState(signedOut.current && pushCleared.current
-        ? empty('signedOut') : empty('error', 'Sign-in could not be confirmed. Sign out and retry.'));
+        ? empty('signedOut') : empty('error', 'Could not confirm sign-in. Check your connection and try again.', foundSavedSession ? 'endSession' : null));
       throw error;
     }
   }
@@ -163,7 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (mounted.current) setState(empty('signedOut'));
     } catch (error) {
-      if (!(error instanceof SessionTransitionError) && mounted.current) setState(empty('error', 'Sign-out or phone cleanup could not be confirmed. Retry before sharing this phone.'));
+      if (!(error instanceof SessionTransitionError) && mounted.current) setState(empty('error', 'Could not finish signing out. Try again before sharing this phone.', 'finishSignOut'));
       throw error;
     }
   }
@@ -185,7 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (mounted.current) { setRole(next); clear(); }
     } catch (error) {
-      if (!(error instanceof SessionTransitionError) && mounted.current) setState(empty('error', 'Workspace change could not be secured. Sign out and retry before changing accounts.'));
+      if (!(error instanceof SessionTransitionError) && mounted.current) setState(empty('error', 'Could not switch workspaces. Sign out before changing accounts.', 'finishSignOut'));
       throw error;
     }
   }

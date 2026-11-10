@@ -17,6 +17,8 @@ function fixture() {
   const driver = {
     readPermission: vi.fn(async () => permission),
     requestPermission: vi.fn(async () => { permission = 'granted'; return true; }), register: vi.fn(async () => fid), disconnect: vi.fn(async () => {}),
+    currentInstallationId: vi.fn(async () => fid),
+    showForegroundHint: vi.fn(),
     listen: vi.fn(async (callback: (kind: PushHint, message: unknown) => void) => { listener = callback; return unsubscribe; }),
   };
   const unsubscribe = vi.fn();
@@ -98,6 +100,48 @@ describe('Native push lifecycle', () => {
     expect(JSON.stringify(await f.readPushEnrollment(f.args))).not.toContain(secret);
     expect(JSON.stringify(await f.readPushEnrollment(f.args))).not.toContain(fid);
   });
+  it('requires an explicit reconnect when the installed Firebase identity changes', async () => {
+    const f = fixture(); await f.enableNativePush(f.args);
+    const rotated = 'r'.repeat(22);
+    f.driver.currentInstallationId.mockResolvedValue(rotated);
+    expect(await f.readPushEnrollment(f.args)).toEqual({ state: 'pending', deviceId, generation: 1, needsReconnect: true });
+    expect(f.driver.register).toHaveBeenCalledOnce();
+    f.driver.register.mockResolvedValue(rotated);
+    await f.enableNativePush(f.args);
+    expect(await f.readPushEnrollment(f.args)).toMatchObject({ state: 'registered' });
+    expect(f.rpc).toHaveBeenCalledWith('register_my_family_push_device', expect.objectContaining({ p_installation_id: installationId, p_fid: rotated }));
+  });
+  it('reports a missing Firebase identity as unverified and skips verification in an unconfigured build', async () => {
+    const f = fixture(); await f.enableNativePush(f.args);
+    f.driver.currentInstallationId.mockResolvedValueOnce(null as unknown as string);
+    await expect(f.readPushEnrollment(f.args)).rejects.toMatchObject({ code: 'response' });
+    expect(await f.readPushEnrollment({ ...f.args, configured: false })).toMatchObject({ state: 'registered' });
+    expect(f.driver.currentInstallationId).toHaveBeenCalledOnce();
+    expect(f.driver.register).toHaveBeenCalledOnce();
+  });
+  it('notifies the matching active workspace to attach listeners after a granted enrollment or reconnect', async () => {
+    const f = fixture(), changed = vi.fn(), other = vi.fn();
+    const unsubscribe = f.subscribePushRegistration(f.args, changed);
+    f.subscribePushRegistration({ userId: otherUser, role: 'parent' }, other);
+    f.driver.readPermission.mockResolvedValue('granted');
+    await f.enableNativePush(f.args);
+    expect(changed).toHaveBeenCalledOnce(); expect(other).not.toHaveBeenCalled();
+    expect(f.driver.requestPermission).not.toHaveBeenCalled();
+    unsubscribe();
+    await f.enableNativePush(f.args);
+    expect(changed).toHaveBeenCalledOnce();
+  });
+  it('waits for a native installation check before deleting it and discards the old status', async () => {
+    const f = fixture(); await f.enableNativePush(f.args);
+    const pending = deferred<string>(); f.driver.currentInstallationId.mockReturnValueOnce(pending.promise);
+    const result = expect(f.readPushEnrollment(f.args)).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => expect(f.driver.currentInstallationId).toHaveBeenCalledOnce());
+    const cleanup = f.disconnectNativePush(f.args);
+    expect(f.driver.disconnect).not.toHaveBeenCalled();
+    pending.resolve(fid);
+    await result; await cleanup;
+    expect(f.driver.disconnect).toHaveBeenCalledOnce();
+  });
   it('keeps a registered binding when preference confirmation conflicts or is unknown', async () => {
     const f = fixture(), original = f.responder.getMockImplementation()!;
     f.responder.mockImplementation(async (name, args) => name === 'set_my_family_push_preferences'
@@ -142,7 +186,7 @@ describe('Native push lifecycle', () => {
   it('rejects an existing binding owned by a different user or role without native access', async () => {
     const f = fixture(); await f.enableNativePush(f.args); vi.clearAllMocks();
     f.getUser.mockResolvedValue({ data: { user: { id: otherUser, is_anonymous: false } }, error: null });
-    expect(await f.readPushEnrollment({ userId: otherUser, role: 'parent' })).toBeNull();
+    expect(await f.readPushEnrollment({ userId: otherUser, role: 'parent', configured: true })).toBeNull();
     await expect(f.enableNativePush({ ...f.args, userId: otherUser })).rejects.toMatchObject({ code: 'cleanup' });
     f.getUser.mockResolvedValue({ data: { user: { id: userId, is_anonymous: false } }, error: null });
     await expect(f.enableNativePush({ ...f.args, role: 'student' })).rejects.toMatchObject({ code: 'cleanup' });
@@ -205,7 +249,9 @@ describe('Native push lifecycle', () => {
   it('never lets a timed-out native operation overlap cleanup or a new account', async () => {
     vi.useFakeTimers(); const f = fixture(), registration = deferred<string>(); f.driver.register.mockReturnValueOnce(registration.promise);
     const enabling = f.enableNativePush(f.args); const timedOut = expect(enabling).rejects.toMatchObject({ code: 'timeout' });
-    await vi.advanceTimersByTimeAsync(10_001); await timedOut;
+    await vi.advanceTimersByTimeAsync(10_001);
+    await expect(f.enableNativePush(f.args)).rejects.toMatchObject({ code: 'busy' });
+    await vi.advanceTimersByTimeAsync(15_000); await timedOut;
     await expect(f.enableNativePush(f.args)).rejects.toMatchObject({ code: 'cleanup' });
     const cleaning = f.disconnectNativePush(f.args); await vi.advanceTimersByTimeAsync(10_001);
     expect(await cleaning).toMatchObject({ nativeCleared: false }); expect(f.driver.disconnect).not.toHaveBeenCalled();
@@ -235,6 +281,29 @@ describe('Native push lifecycle', () => {
     expect(hints.mock.calls).toEqual([['received'], ['opened']]);
     const cleaning = f.disconnectNativePush(f.args); f.emit('opened', { data: { screen: 'notifications' } });
     expect(hints).toHaveBeenCalledTimes(2); expect(f.unsubscribe).toHaveBeenCalledOnce(); await cleaning; stop();
+  });
+  it('refreshes the matching inbox and only shows the foreground message with OS permission', async () => {
+    const f = fixture(), hint = { data: { screen: 'notifications' } };
+    const reload = vi.fn(), other = vi.fn();
+    const unsubscribe = f.subscribePushInboxRefresh(f.args, reload);
+    f.subscribePushInboxRefresh({ userId, role: 'student' }, other);
+    f.subscribePushInboxRefresh({ userId: otherUser, role: 'parent' }, other);
+    await f.enableNativePush(f.args);
+    const stop = await f.attachPushInboxHints({ ...f.args, onInboxHint: vi.fn() });
+    f.emit('received', { data: { screen: '/admin' } });
+    f.driver.readPermission.mockResolvedValueOnce('settings');
+    f.emit('received', hint); await Promise.resolve();
+    expect(reload).toHaveBeenCalledOnce(); expect(other).not.toHaveBeenCalled();
+    expect(f.driver.showForegroundHint).not.toHaveBeenCalled();
+    f.emit('received', hint); await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(2); expect(f.driver.showForegroundHint).toHaveBeenCalledOnce();
+    unsubscribe();
+    f.emit('opened', hint);
+    expect(reload).toHaveBeenCalledTimes(2); expect(f.driver.showForegroundHint).toHaveBeenCalledOnce();
+    const pendingPermission = deferred<PushPermission>();
+    f.driver.readPermission.mockReturnValueOnce(pendingPermission.promise);
+    f.emit('received', hint); stop(); pendingPermission.resolve('granted'); await Promise.resolve();
+    expect(f.driver.showForegroundHint).toHaveBeenCalledOnce();
   });
   it('cleans a saved installation on confirmed cold-start auth loss without a session or any RPC', async () => {
     const f = fixture(); await f.enableNativePush(f.args); vi.clearAllMocks();
@@ -272,8 +341,9 @@ const sdk = vi.hoisted(() => ({
   register: vi.fn(async () => {}), unregister: vi.fn(async () => {}), setAutoInitEnabled: vi.fn(async () => {}),
   getInstallations: vi.fn(() => ({})), getId: vi.fn(async () => 'n'.repeat(22)), deleteInstallations: vi.fn(async () => {}),
   onMessage: vi.fn(() => () => {}), onNotificationOpenedApp: vi.fn(() => () => {}), getInitialNotification: vi.fn(async () => null),
+  toast: vi.fn(),
 }));
-vi.mock('react-native', () => ({ Platform: sdk.platform, PermissionsAndroid: { request: sdk.permission, PERMISSIONS: { POST_NOTIFICATIONS: 'post' }, RESULTS: { GRANTED: 'granted' } } }));
+vi.mock('react-native', () => ({ Platform: sdk.platform, PermissionsAndroid: { request: sdk.permission, PERMISSIONS: { POST_NOTIFICATIONS: 'post' }, RESULTS: { GRANTED: 'granted' } }, ToastAndroid: { show: sdk.toast, SHORT: 0 } }));
 vi.mock('expo-secure-store', () => ({ getItemAsync: sdk.readPrompt, setItemAsync: sdk.writePrompt }));
 vi.mock('@react-native-firebase/app', () => ({ getApps: sdk.getApps, getApp: sdk.getApp }));
 vi.mock('@react-native-firebase/messaging', () => ({ getMessaging: sdk.getMessaging, register: sdk.register, unregister: sdk.unregister,
@@ -314,6 +384,17 @@ describe('Android FID adapter', () => {
     const driver = await createNativeDriver();
     sdk.getId.mockResolvedValueOnce('s'.repeat(22));
     await expect(driver.register()).rejects.toMatchObject({ code: 'native' });
+  });
+  it('reads the Firebase installation without enrolling and gives a retryable message for provider errors', async () => {
+    const { createNativeDriver } = await import('../src/push/native');
+    const driver = await createNativeDriver();
+    sdk.register.mockClear();
+    expect(await driver.currentInstallationId()).toBe('n'.repeat(22));
+    sdk.getId.mockRejectedValueOnce(new Error('Firebase transport error'));
+    await expect(driver.currentInstallationId()).rejects.toThrow('Phone registration could not be verified. Try again.');
+    expect(sdk.register).not.toHaveBeenCalled();
+    driver.showForegroundHint();
+    expect(sdk.toast).toHaveBeenCalledWith('New school update. Open Updates to view it.', 0);
   });
   it('attempts installation deletion even when unregister fails synchronously and does not claim cleanup success', async () => {
     const { createNativeDriver } = await import('../src/push/native');

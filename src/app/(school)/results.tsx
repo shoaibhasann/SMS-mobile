@@ -4,9 +4,9 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../auth/provider';
 import { getFamilyAssessmentResults, getFamilyNotificationResult, publicationPageSize, type FamilyAssessmentResult, type FamilyResultPage } from '../../data/results';
 import type { FamilyChild } from '../../data/family';
-import { ChildPicker, childName, useFamily } from '../../ui/family';
+import { ChildPicker, useFamily } from '../../ui/family';
 import { useLoad } from '../../ui/use-load';
-import { Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
+import { BackArrow, Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
 import { usePalette } from '../../ui/theme';
 
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -25,9 +25,9 @@ function ResultsAccess({ childId, assessmentId, invalid }: { childId?: string; a
     if (child && family.children.some(item => item.id === child.id)) family.select(child.id);
     router.replace('/(school)/results');
   }
-  return <Screen><Title title="Published results" subtitle="School-reviewed assessment results for your permitted student profile." />
-    <Button label="Back to Learning" secondary onPress={() => router.replace('/(school)/learning')} />
-    {childId === undefined ? <ChildPicker /> : child && <Card><Text style={{ fontWeight: '600' }}>{childName(child)}</Text><Text>{child.admission_no}</Text></Card>}
+  return <Screen><BackArrow onPress={() => router.canGoBack() ? router.back() : router.replace('/(school)/(tabs)/learning')} />
+    <Title title="Published results" subtitle="School-reviewed assessment results for your permitted student profile." />
+    {childId === undefined ? <ChildPicker /> : child && <ChildPicker child={child} onSelect={pupil => { family.select(pupil.id); router.replace('/(school)/results'); }} />}
     {invalid ? <ErrorCard message="This result link is invalid. Open published result history to continue." />
       : family.loading ? <Skeleton />
         : family.error ? <ErrorCard message={family.error} retry={family.refresh} />
@@ -73,9 +73,8 @@ function ResultCard({ result }: { result: FamilyAssessmentResult }) {
     <Text accessibilityRole="header" style={{ fontSize: 19, lineHeight: 28, fontWeight: '700' }}>{source.name}</Text>
     <Text>{source.subject_name} · {source.class_name}{source.section_name ? ` / ${source.section_name}` : ' / Whole class'}</Text>
     <Text style={{ color: p.muted, fontSize: 12 }}>{source.academic_year_name} · {assessed}</Text>
-    <View style={{ padding: 16, borderRadius: 14, backgroundColor: p.soft, gap: 8 }}><Text style={{ fontWeight: '600' }}>{result.student_name}</Text>
-      <Text style={{ color: p.muted, fontSize: 12 }}>{result.admission_no}{result.roll_no ? ` · Roll ${result.roll_no}` : ''}</Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 18, paddingTop: 5 }}><View style={{ flex: 1, minWidth: 110 }}><Text style={{ color: p.muted, fontSize: 12 }}>Marks obtained</Text><Text style={{ fontSize: 27, lineHeight: 39, fontWeight: '700' }}>{result.marks_obtained} / {result.maximum_marks}</Text></View>
+    <View style={{ padding: 16, borderRadius: 14, backgroundColor: p.soft }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 18 }}><View style={{ flex: 1, minWidth: 110 }}><Text style={{ color: p.muted, fontSize: 12 }}>Marks obtained</Text><Text style={{ fontSize: 27, lineHeight: 39, fontWeight: '700' }}>{result.marks_obtained} / {result.maximum_marks}</Text></View>
         <View style={{ flex: 1, minWidth: 100 }}><Text style={{ color: p.muted, fontSize: 12 }}>Percentage</Text><Text style={{ fontSize: 27, lineHeight: 39, fontWeight: '700' }}>{result.percentage.toFixed(2)}%</Text></View></View>
     </View>
     {result.remarks !== null && result.remarks !== '' && <View style={{ gap: 4 }}><Text style={{ fontWeight: '600' }}>Teacher remarks</Text><Text>{result.remarks}</Text></View>}

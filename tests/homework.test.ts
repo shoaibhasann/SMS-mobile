@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
-import { checkedHomeworkPath, getHomework, homeworkFileScope, listHomework, loadSubmission, submitHomework, type HomeworkActivity } from '../src/data/homework';
+import { checkedHomeworkPath, getHomework, homeworkFileScope, listHomework, listHomeworkStatuses, loadSubmission, submitHomework, type HomeworkActivity } from '../src/data/homework';
 import { discardHomeworkFile, homeworkBucket, homeworkFileMaxBytes, uploadHomeworkFile, validateHomeworkBytes } from '../src/data/homework-files';
 import { createPendingHomeworkStore, type HomeworkIntentScope } from '../src/data/pending-homework';
 import type { FamilyAccess, FamilyChild, FamilyRole } from '../src/data/family';
@@ -53,6 +53,17 @@ const buffer = (header: number[], length = header.length) => { const bytes = new
 const pdf = () => buffer([37, 80, 68, 70, 45, 49, 46, 55]);
 
 describe('published family homework data', () => {
+  it('gets only the selected child’s homework statuses and rejects mixed child responses', async () => {
+    const guardian = fixture('parent'), student = fixture();
+    expect(await listHomeworkStatuses(student.client, 'student', child, [work])).toEqual(new Map([[work.id, 'submitted']]));
+    expect(student.rpc).toHaveBeenCalledWith('list_my_homework_submissions', { p_activity_ids: [work.id] });
+    expect(await listHomeworkStatuses(guardian.client, 'parent', child, [work])).toEqual(new Map([[work.id, 'submitted']]));
+    expect(guardian.queries[0]).toMatchObject({ table: 'activity_submissions', selection: 'activity_id,student_id,status',
+      filters: [['student_id', child.id], ['activity_id', [work.id]]] });
+    guardian.patches.activity_submissions = { data: [submission({ student_id: id(99) })], error: null };
+    await expect(listHomeworkStatuses(guardian.client, 'parent', child, [work])).rejects.toThrow('could not be verified');
+  });
+
   it('uses the actual current enrollment tuple and exact section-or-class publication filters', async () => {
     const f = fixture(), signal = new AbortController().signal;
     expect(await listHomework(f.client, f.access, 'student', child, 0, signal)).toEqual({ rows: [work], total: 1, offset: 0 });

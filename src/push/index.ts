@@ -19,6 +19,6 @@ const lifecycle = createPushLifecycle({
   }),
   driver: createNativeDriver,
 });
-export const { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints } = lifecycle;
+export const { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints, subscribePushInboxRefresh, subscribePushRegistration } = lifecycle;
 export { NativePushError } from './core';
 export type { PushRole, PushOwner, PushEnrollment, PushArguments, PushHint } from './core';

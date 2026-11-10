@@ -9,7 +9,7 @@ import { getFamilyNotificationLeave, leaveOverlaps, listFamilyStudentLeave, Stud
 import { createPendingLeaveStore, type PendingLeaveIntent, type LeaveDraft } from '../../data/pending-leave';
 import { ChildPicker, useFamily } from '../../ui/family';
 import { useLoad } from '../../ui/use-load';
-import { Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
+import { BackArrow, Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
 import { usePalette } from '../../ui/theme';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -28,8 +28,8 @@ export default function Leave() {
   try { target = validateLeaveTarget(params.child, params.request); } catch (cause) { error = cause instanceof Error ? cause.message : 'This leave link is invalid.'; }
   const child = target.child ? family.children.find(value => value.id === target.child) : family.selected;
   return <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><Screen>
-    <Button label="Back to Learning" secondary onPress={() => router.replace('/(school)/learning')} />
-    <Title title="Leave requests" subtitle="Request time away and view the school’s saved decision." />
+    <BackArrow onPress={() => router.canGoBack() ? router.back() : router.replace('/(school)/(tabs)/learning')} />
+    <Title title="Leave requests" subtitle={auth.role === 'parent' ? 'Request leave for a linked child and track the decision.' : 'Request leave for yourself and track the decision.'} />
     {error ? <ErrorCard message={error} /> : family.loading ? <Skeleton /> : family.error ? <ErrorCard message={family.error} retry={family.refresh} /> : !child ? <Card><Text>{target.child ? 'This student is no longer available in your current school access.' : 'No student profile is currently linked.'}</Text></Card> : auth.access && auth.client ?
       <LeaveForChild key={`${auth.access.userId}:${auth.access.schoolId}:${auth.role}:${child.id}`} access={auth.access} client={auth.client} role={auth.role} child={child} requestId={target.request} /> : <Skeleton />}
   </Screen></KeyboardAvoidingView>;
@@ -84,7 +84,7 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
       const saved = await submitStudentLeave(client, access, role, child, prepared.intent, controller.signal);
       await pendingStore.complete(scope, prepared.intent.idempotencyKey);
       if (!current()) return;
-      setPending(null); setDraft(empty); setOffset(0); setNotice('Request saved. Your school will review it. Attendance records are unchanged.'); setExpanded(saved); history.reload();
+      setPending(null); setDraft(empty); setOffset(0); setNotice('Request sent. You can track it under Request history.'); setExpanded(saved); history.reload();
     } catch (cause) {
       // Only the first explicitly rejected attempt can unlock editing. An earlier unknown commit stays locked.
       if (prepared && !prepared.recovered && cause instanceof StudentLeaveError && ['22023', 'PT409', '42501', '23505', '40001'].includes(cause.code) && !controller.signal.aborted) {
@@ -104,20 +104,29 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
     {role === 'parent' && family.children.length > 1 && (busy || pending) && <Text style={{ color: p.muted }}>Student selection is locked until this request is confirmed. An unconfirmed request is kept securely for this account and student.</Text>}
     {requestId && (decision.loading ? <Skeleton rows={1} /> : decision.error ? <ErrorCard message={decision.error} retry={decision.reload} /> : decision.data ? <LeaveRecord row={decision.data} expanded /> : <Card><Text>This leave decision is currently unavailable. Refresh school access or contact your school.</Text></Card>)}
     <Card><Text accessibilityRole="header" style={{ fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{pending ? 'Confirm your submitted request' : 'Request leave'}</Text>
-      <Text style={{ color: p.muted }}>Dates must be within the current academic year. An approved request does not automatically mark attendance.</Text>
+      <Text style={{ color: p.muted }}>Your principal or school administrator approves or declines the request. Attendance is recorded separately.</Text>
       {pendingLoading ? <Skeleton rows={1} /> : pendingError ? <ErrorCard message={pendingError} retry={() => { setPendingLoading(true); void restore().catch(() => {}).finally(() => setPendingLoading(false)); }} /> : <>
         {pending && <Text style={{ color: p.warning }}>The previous outcome is unconfirmed. Dates and reason are locked. Retry this same request to check whether your school received it.</Text>}
         {child.status !== 'active' && !pending && <Text style={{ color: p.muted }}>Retained history is available. Only an active student with a current enrollment can submit a new request.</Text>}
-        <Text nativeID="leave-start" style={{ fontWeight: '600' }}>Start date · YYYY-MM-DD</Text><TextInput accessibilityLabel="Start date, YYYY-MM-DD" accessibilityLabelledBy="leave-start" placeholder="YYYY-MM-DD" placeholderTextColor={p.muted} value={draft.startDate} onChangeText={startDate => setDraft(value => ({ ...value, startDate }))} editable={!locked && child.status === 'active'} maxLength={10} autoCorrect={false} autoCapitalize="none" keyboardType="numbers-and-punctuation" style={field} />
-        <Text nativeID="leave-end" style={{ fontWeight: '600' }}>End date · YYYY-MM-DD</Text><TextInput accessibilityLabel="End date, YYYY-MM-DD" accessibilityLabelledBy="leave-end" placeholder="YYYY-MM-DD" placeholderTextColor={p.muted} value={draft.endDate} onChangeText={endDate => setDraft(value => ({ ...value, endDate }))} editable={!locked && child.status === 'active'} maxLength={10} autoCorrect={false} autoCapitalize="none" keyboardType="numbers-and-punctuation" style={field} />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8 }}><Text nativeID="leave-reason" style={{ fontWeight: '600' }}>Reason</Text><Text style={{ color: p.muted, fontSize: 12 }}>{Array.from(draft.reason.trim()).length}/1,000</Text></View>
-        <TextInput accessibilityLabel="Reason for leave" accessibilityLabelledBy="leave-reason" placeholder="Tell your school why leave is needed" placeholderTextColor={p.muted} value={draft.reason} onChangeText={reason => setDraft(value => ({ ...value, reason }))} editable={!locked && child.status === 'active'} multiline maxLength={1000} textAlignVertical="top" style={[field, { minHeight: 112 }]} />
+        <Text style={{ color: p.muted }}>All fields are required. Choose dates in the current academic year.</Text>
+        <View style={{ gap: 6 }}>
+          <Text nativeID="leave-start" style={{ fontWeight: '600' }}>Start date</Text>
+          <TextInput accessibilityLabel="Start date, YYYY-MM-DD" accessibilityLabelledBy="leave-start" placeholder="YYYY-MM-DD" placeholderTextColor={p.muted} value={draft.startDate} onChangeText={startDate => setDraft(value => ({ ...value, startDate }))} editable={!locked && child.status === 'active'} maxLength={10} autoCorrect={false} autoCapitalize="none" keyboardType="numbers-and-punctuation" style={field} />
+        </View>
+        <View style={{ gap: 6 }}>
+          <Text nativeID="leave-end" style={{ fontWeight: '600' }}>End date</Text>
+          <TextInput accessibilityLabel="End date, YYYY-MM-DD" accessibilityLabelledBy="leave-end" placeholder="YYYY-MM-DD" placeholderTextColor={p.muted} value={draft.endDate} onChangeText={endDate => setDraft(value => ({ ...value, endDate }))} editable={!locked && child.status === 'active'} maxLength={10} autoCorrect={false} autoCapitalize="none" keyboardType="numbers-and-punctuation" style={field} />
+        </View>
+        <View style={{ gap: 6 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8 }}><Text nativeID="leave-reason" style={{ fontWeight: '600' }}>Reason</Text><Text style={{ color: p.muted, fontSize: 12 }}>{Array.from(draft.reason.trim()).length}/1,000</Text></View>
+          <TextInput accessibilityLabel="Reason for leave" accessibilityLabelledBy="leave-reason" placeholder="Tell your school why leave is needed" placeholderTextColor={p.muted} value={draft.reason} onChangeText={reason => setDraft(value => ({ ...value, reason }))} editable={!locked && child.status === 'active'} multiline maxLength={1000} textAlignVertical="top" style={[field, { minHeight: 112 }]} />
+        </View>
         <Button label={busy ? 'Confirming request…' : pending ? 'Retry this same request' : 'Submit leave request'} disabled={busy || (!pending && child.status !== 'active')} onPress={() => void submit()} />
       </>}
       {notice && <Text accessibilityLiveRegion="polite" style={{ color: p.success }}>{notice}</Text>}{error && <ErrorCard message={error} />}
     </Card>
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}><Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 18 }}>Saved history</Text><Button label="Refresh history" secondary disabled={busy} onPress={history.reload} /></View>
-    {history.loading ? <Skeleton /> : history.error ? <ErrorCard message={history.error} retry={history.reload} /> : !history.data?.length ? <Card><Text>No saved leave requests in this page.</Text></Card> : history.data.map(row => <View key={row.id} style={{ gap: 8 }}><LeaveRecord row={row} expanded={row.id === expanded} /><Pressable accessibilityRole="button" accessibilityLabel={row.id === expanded ? 'Hide leave details' : 'Show leave details'} onPress={() => setExpanded(value => value === row.id ? '' : row.id)} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 10 }}><Text style={{ color: p.primary, fontWeight: '600' }}>{row.id === expanded ? 'Hide details' : 'View details'}</Text></Pressable></View>)}
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}><Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 18 }}>Request history</Text><Button label="Refresh history" secondary disabled={busy} onPress={history.reload} /></View>
+    {history.loading ? <Skeleton /> : history.error ? <ErrorCard message={history.error} retry={history.reload} /> : !history.data?.length ? <Card><Text>{offset === 0 ? 'No leave requests yet.' : 'No leave requests on this page.'}</Text></Card> : history.data.map(row => <View key={row.id} style={{ gap: 8 }}><LeaveRecord row={row} expanded={row.id === expanded} /><Pressable accessibilityRole="button" accessibilityLabel={row.id === expanded ? 'Hide leave details' : 'Show leave details'} onPress={() => setExpanded(value => value === row.id ? '' : row.id)} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 10 }}><Text style={{ color: p.primary, fontWeight: '600' }}>{row.id === expanded ? 'Hide details' : 'View details'}</Text></Pressable></View>)}
     <View style={{ gap: 10 }}><Text style={{ color: p.muted }}>Page {Math.floor(offset / 50) + 1}{history.data?.[0] ? ` · ${history.data[0].total_count} saved requests` : ''}</Text><View style={{ flexDirection: 'row', gap: 10 }}><View style={{ flex: 1 }}><Button label="Previous" secondary disabled={busy || history.loading || offset === 0} onPress={() => setOffset(value => Math.max(0, value - 50))} /></View><View style={{ flex: 1 }}><Button label="Next" secondary disabled={busy || history.loading || !history.data?.length || offset + 50 >= history.data[0].total_count} onPress={() => setOffset(value => value + 50)} /></View></View></View>
   </>;
 }

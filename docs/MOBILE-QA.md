@@ -2,6 +2,31 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Android QA5 — 10 November
+
+Use Android version code 5 with the private Student or Guardian test account. Updating an installed APK can resume its saved session. A fresh install opens Sign in.
+
+- [ ] **Sign in and sign out.** Sign out from Account and confirm. Relaunch and verify the sign-in form appears and school screens stay closed until login. Installing over a signed-in build should reopen the same account after access is checked.
+- [ ] **Teachers.** Open Home → Class teachers as Student and Guardian. This QA section has an assigned subject teacher for English and Mathematics. A Class teacher label appears only when the school has designated one for the section.
+- [ ] **Attendance.** The QA pupil has 37 saved days from 21 September to 10 November 2026. Switch year, month and status, verify November shows seven saved days, and clear the filters to see all 37. April–August have no saved QA records.
+- [ ] **Homework.** Open Learning, check assignment due dates and submission status, then tap a row to open its details. Student can submit and Guardian can review. In Updates, a Homework card opens the same assignment only when **View homework** is selected.
+- [ ] **Leave.** Student requests for self and Guardian requests for a linked child. Review the request as Principal or School Admin in the web app. Verify the decision on mobile and confirm the saved attendance is unchanged.
+- [ ] **Physical push.** Open Account → Mobile notifications. If offered, reconnect this phone and check that Android allows SMS notifications. Press Home to background the app. Have QA send a fresh test, look for **SMS school update**, and tap it. It should open **School updates**. Verify the fresh alert in **All** and **Unread** before marking it read. In the foreground, expect an in-app message and inbox refresh.
+
+Engineering checks: 279 mobile tests, TypeScript and lint passed. The hosted teacher API returned the same assigned teacher for the Student and linked Guardian, and denied anonymous, wrong-role, unlinked and cross-school reads. The updated development app received two real FCM pushes on an isolated emulator. The foreground push showed an in-app message and refreshed Updates, and the background push appeared in the Android tray and opened Updates.
+
+The exact signed QA5 APK upgraded QA4 on a separate emulator. Fresh Student login, Teachers, real homework statuses, and sign-out followed by relaunch all passed. After the first permission grant, the Account status check timed out once and Retry showed **On for this phone**. The signed QA5 then received a real background tray alert, and tapping it opened School updates with the matching test card. The previous physical v4 push was accepted by Firebase but did not appear on the tester’s phone. Physical QA5 delivery is open.
+
+## Android emulator and Fast Refresh — 10 November
+
+The visible emulator runs the existing Firebase-enabled dev app with Metro at `http://localhost:8087`. Keep Metro open to load UI and TypeScript edits on the same install. Reload in the Expo dev menu if a route change does not refresh.
+
+- [ ] Student and Guardian Attendance each show 37 saved dates across two pages. Learning → Academic analysis shows three published assessments, Mathematics 70% → 85%, and English 80%.
+- [ ] Open homework from Learning and Updates. The exact assignment opens in the app. The compact top-left arrow returns to the originating screen. Page headers show the workspace label and greeting on Home only.
+- [ ] Account → Dark mode applies immediately. Relaunch and verify the selection remains.
+- [ ] On a phone with a saved Google Password Manager entry, select it and confirm both fields fill before tapping Sign in. A temporary Android framework autofill service filled both fields on the emulator.
+- [ ] To test remote delivery, enable notifications on the QA device, background SMS, and publish a fresh homework assignment to the linked QA section. Check the Android tray, then tap and open the matching assignment in Updates. The live 10 November emulator test received the generic SMS alert and opened the exact QA homework.
+
 ## Signed Android QA build — 10 November
 
 Use signed QA3 (Android version code 3) and the privately supplied Student and Parent logins. QA3 upgrades the earlier signed QA APK in place. The exact APK passed emulator upgrade, first permission Allow, denial → Android settings recovery, and linked attendance. Physical delivery and tap acceptance are below.
