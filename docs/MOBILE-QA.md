@@ -2,6 +2,12 @@
 
 6 November 2026 · Separate Android-first React Native app · Founder acceptance pending
 
+## Android QA6 — 13 November
+
+Use Android version code 6 (`SMS-Android-1.0.0-QA6.apk`), built from `main` at 6788557 with the end-to-end audit fixes. QA6 is signed with the Expo template debug key, not the sideload key of QA1–QA5, so it cannot install over those builds. On the old app turn off notifications (Account → **Turn off on this phone**), uninstall it, then install QA6 and sign in again. If the old app could not be opened, revoke its row under web Account settings → Mobile push notifications → **Registered devices** after signing in on QA6.
+
+Emulator checks on the exact APK (Android 16, arm64): installing over QA5 is refused with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. A fresh install cold-starts in about 0.4 s to Sign in with the new logo and **Email or mobile number**. `sms-school://not-a-screen` and `sms-school:///_sitemap` show **Link not available**, and `SYSTEM_ALERT_WINDOW` is not requested. The APK carries only `arm64-v8a` and `armeabi-v7a`, so x86 emulators cannot install it. Signed-in flows and physical push delivery are open, and so is any Android app restriction on the Firebase API key that names the old certificate.
+
 ## Android QA5 — 10 November
 
 Use Android version code 5 with the private Student or Guardian test account. Updating an installed APK can resume its saved session. A fresh install opens Sign in.
