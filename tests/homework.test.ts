@@ -15,7 +15,7 @@ const input = { text: 'My complete answer', filePath: null, fileName: null, expe
 const filePath = [...[2, 5, 6, 7, 8, 9, 3].map(id), `${id(21)}.pdf`].join('/');
 const submission = (patch: Record<string, unknown> = {}) => ({ id: id(11), activity_id: id(9), student_id: id(3), text_response: 'Saved answer', file_path: null, file_name: null, submitted_at: stamp, status: 'submitted', marks: null, feedback: null, revision: 1, ...patch });
 type Reply = { data: unknown; error: { code: string; message?: string } | null; count?: number };
-type Query = { table: string; filters: [string, unknown][]; single: boolean; range?: [number, number]; selection: string; signal?: AbortSignal; or?: [string, unknown] };
+type Query = { table: string; filters: [string, unknown][]; single: boolean; range?: [number, number]; selection: string; signal?: AbortSignal; or?: [string, unknown]; orders: [string, unknown][] };
 function fixture(role: FamilyRole = 'student') {
   const access: FamilyAccess = { userId: id(1), schoolId: id(2), name: 'QA family', roles: [role] };
   const patches: Record<string, Reply> = {}, rpcPatches: Record<string, Reply> = {}, queries: Query[] = [];
@@ -26,10 +26,10 @@ function fixture(role: FamilyRole = 'student') {
   });
   const signals: AbortSignal[] = [];
   const from = vi.fn((table: string) => {
-    const q: Query = { table, filters: [], single: false, selection: '' }; queries.push(q);
+    const q: Query = { table, filters: [], single: false, selection: '', orders: [] }; queries.push(q);
     const builder = { select: (selection: string) => { q.selection = selection; return builder; }, eq: (column: string, value: unknown) => { q.filters.push([column, value]); return builder; },
       in: (column: string, value: unknown) => { q.filters.push([column, value]); return builder; }, or: (filter: string, options: unknown) => { q.or = [filter, options]; return builder; },
-      order: () => builder, limit: () => builder, range: (first: number, last: number) => { q.range = [first, last]; return builder; },
+      order: (column: string, options?: unknown) => { q.orders.push([column, options]); return builder; }, limit: () => builder, range: (first: number, last: number) => { q.range = [first, last]; return builder; },
       maybeSingle: () => { q.single = true; return builder; }, abortSignal: (signal: AbortSignal) => { q.signal = signal; return builder; },
       then: (resolve: (value: Reply) => unknown, reject: (error: unknown) => unknown) => {
         const reply = patches[table] ?? (table === 'profiles' ? { data: { id: id(1), school_id: id(2), full_name: 'QA family', is_active: true }, error: null }
@@ -66,12 +66,17 @@ describe('published family homework data', () => {
 
   it('uses the actual current enrollment tuple and exact section-or-class publication filters', async () => {
     const f = fixture(), signal = new AbortController().signal;
-    expect(await listHomework(f.client, f.access, 'student', child, 0, signal)).toEqual({ rows: [work], total: 1, offset: 0 });
+    expect(await listHomework(f.client, f.access, 'student', child, 0, signal)).toEqual({ rows: [work], total: 1, offset: 0, placed: true });
     expect(f.queries.find(q => q.table === 'enrollments')?.filters).toEqual([['student_id', id(3)], ['academic_year_id', id(5)], ['status', 'active']]);
     const query = f.queries.find(q => q.table === 'class_activities')!;
     expect(query.filters).toEqual([['activity_type', 'homework'], ['class_logs.school_id', id(2)], ['class_logs.academic_year_id', id(5)], ['class_logs.class_id', id(6)], ['class_logs.status', 'published']]);
     expect(query.or).toEqual([`section_id.is.null,section_id.eq.${id(7)}`, { referencedTable: 'class_logs' }]);
     expect(query.range).toEqual([0, 19]); expect(query.signal).toBe(signal);
+  });
+  it('lists current work first: newest due date first, undated work at the top, then newest posted', async () => {
+    const f = fixture();
+    await listHomework(f.client, f.access, 'student', child);
+    expect(f.queries.find(q => q.table === 'class_activities')!.orders).toEqual([['due_date', { ascending: false, nullsFirst: true }], ['created_at', { ascending: false }], ['id', undefined]]);
   });
   it('whitelists activity fields and permits class-wide text homework without inventing a section', async () => {
     const f = fixture(); f.patches.class_activities = { data: activity({ class_logs: log({ section_id: null }), private_note: 'omit', attachment_secret: 'omit' }), error: null };
@@ -81,7 +86,7 @@ describe('published family homework data', () => {
   it('returns an empty page for absent current enrollment without querying other class homework', async () => {
     for (const table of ['academic_years', 'enrollments']) {
       const f = fixture(); f.patches[table] = { data: null, error: null };
-      expect(await listHomework(f.client, f.access, 'student', child)).toEqual({ rows: [], total: 0, offset: 0 });
+      expect(await listHomework(f.client, f.access, 'student', child)).toEqual({ rows: [], total: 0, offset: 0, placed: false });
       expect(f.queries.some(q => q.table === 'class_activities')).toBe(false);
     }
   });

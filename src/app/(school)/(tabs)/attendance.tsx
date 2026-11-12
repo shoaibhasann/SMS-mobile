@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Pressable, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, Check, ChevronDown, SlidersHorizontal } from 'lucide-react-native';
 import { useAuth } from '../../../auth/provider';
 import { attendanceLabels, attendanceMonths, attendanceStatuses, loadAttendance, loadAttendanceYears, type AttendanceStatus, type FamilyChild } from '../../../data';
@@ -15,6 +16,15 @@ const formatMonth = (value: string) => schoolMonth.format(new Date(`${value}T12:
 type FilterOption = { value: string; label: string };
 type Filter = 'year' | 'month' | 'status';
 type Selection = { yearId?: string; month?: string; status?: AttendanceStatus };
+type SavedParams = { child?: string | string[]; year?: string | string[]; month?: string | string[]; status?: string | string[]; page?: string | string[] };
+// Filters and page are mirrored into the route so the (school) layout can restore them after a background recheck.
+function savedView(params: SavedParams, childId: string): { filters: Selection; offset: number } {
+  if (params.child !== childId) return { filters: {}, offset: 0 }; // Switching child starts on page 1 with no filters.
+  const yearId = typeof params.year === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.year) ? params.year : undefined;
+  const month = yearId && typeof params.month === 'string' && /^\d{4}-\d{2}-01$/.test(params.month) ? params.month : undefined;
+  const status = attendanceStatuses.find(value => value === params.status), page = Number(params.page);
+  return { filters: { yearId, month, status }, offset: Number.isSafeInteger(page) && page > 0 ? page * pageSize : 0 };
+}
 
 function FilterField({ label, value, options, expanded, toggle, select }: {
   label: string; value: string; options: FilterOption[]; expanded: boolean; toggle(): void; select(value: string): void;
@@ -42,17 +52,21 @@ function FilterField({ label, value, options, expanded, toggle, select }: {
 
 export default function Attendance() {
   const family = useFamily();
-  return <Screen><Title title="Attendance" subtitle="View your school’s saved daily records." />
+  // A new alert open carries a fresh nonce, so the history remounts on page 1 with no filters.
+  const { alert } = useLocalSearchParams<{ alert?: string }>();
+  return <Screen bottomInset={false}><Title title="Attendance" subtitle="View your school’s saved daily records." />
     {family.loading ? <Skeleton rows={2} /> : family.error ? <ErrorCard message={family.error} retry={family.refresh} />
-      : family.selected ? <><ChildPicker /><AttendanceHistory key={family.selected.id} child={family.selected} /></>
+      : family.selected ? <><ChildPicker /><AttendanceHistory key={`${family.selected.id}:${alert ?? ''}`} child={family.selected} /></>
         : <Card><Text>No student profile is currently linked.</Text></Card>}
   </Screen>;
 }
 
 function AttendanceHistory({ child }: { child: FamilyChild }) {
-  const { access, role, client } = useAuth(), p = usePalette();
-  const [filters, setFilters] = useState<Selection>({});
-  const [offset, setOffset] = useState(0);
+  const { access, role, client } = useAuth(), p = usePalette(), family = useFamily();
+  const params = useLocalSearchParams<SavedParams>();
+  const [saved] = useState(() => savedView(params, child.id));
+  const [filters, setFilters] = useState<Selection>(saved.filters);
+  const [offset, setOffset] = useState(saved.offset);
   const [showFilters, setShowFilters] = useState(false);
   const [expanded, setExpanded] = useState<Filter | null>(null);
   const scope = `${access!.userId}:${role}:${child.id}`;
@@ -65,21 +79,25 @@ function AttendanceHistory({ child }: { child: FamilyChild }) {
   const year = years.find(option => option.id === filters.yearId);
   const months = year && yearContext.data ? attendanceMonths(year, yearContext.data.today) : [];
   const filtered = !!(filters.yearId || filters.month || filters.status);
+  function show(next: Selection, nextOffset: number) {
+    setFilters(next); setOffset(nextOffset);
+    router.setParams({ child: child.id, year: next.yearId, month: next.month, status: next.status, page: nextOffset ? String(nextOffset / pageSize) : undefined });
+  }
   const range = result.data?.rows.length ? `${offset + 1}–${offset + result.data.rows.length} of ${result.data.count}` : '';
   const scopeLabel = [year?.name ?? (filters.yearId ? 'Selected academic year' : 'All academic years'), filters.month && formatMonth(filters.month), filters.status && attendanceLabels[filters.status]].filter(Boolean).join(' · ');
   const statuses = [{ value: '', label: 'All statuses' }, ...attendanceStatuses.map(status => ({ value: status, label: attendanceLabels[status] }))];
 
   function select(next: Selection) {
-    setOffset(0);
     setExpanded(null);
-    setFilters(next);
+    show(next, 0);
   }
   function toggle(field: Filter) { setExpanded(expanded === field ? null : field); }
-  function refresh() { result.reload(); yearContext.reload(); }
+  // After an error (for example a revoked link) re-check the linked children; a normal refresh stays local and keeps the filters.
+  function refresh() { if (result.error) family.refresh(); else { result.reload(); yearContext.reload(); } }
 
   return <>
     <Card style={{ gap: 8, padding: 12 }}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Attendance filters" accessibilityState={{ expanded: showFilters }}
+      <Pressable accessibilityRole="button" accessibilityLabel={`Attendance filters, ${scopeLabel}`} accessibilityState={{ expanded: showFilters }}
         onPress={() => { setShowFilters(value => !value); setExpanded(null); }} style={({ pressed }) => ({ minHeight: 48, borderRadius: 10, paddingHorizontal: 8,
           flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? p.soft : p.surface })}>
         <SlidersHorizontal size={19} color={p.primary} /><View style={{ flex: 1 }}><Text style={{ fontWeight: '700' }}>Filters</Text>
@@ -87,7 +105,7 @@ function AttendanceHistory({ child }: { child: FamilyChild }) {
       </Pressable>
       {showFilters && <View style={{ gap: 8, borderTopWidth: 1, borderTopColor: p.border, paddingTop: 8 }}>
         {yearContext.loading ? <Text style={{ color: p.muted }} accessibilityLiveRegion="polite">Loading academic years…</Text>
-          : yearContext.error ? <ErrorCard message="Academic years could not be loaded. You can still view saved records." retry={yearContext.reload} />
+          : yearContext.error ? <ErrorCard inline message="Academic years could not be loaded. You can still view saved records." retry={yearContext.reload} />
             : <><FilterField label="Academic year" value={filters.yearId ?? ''} options={[{ value: '', label: 'All academic years' }, ...years.map(option => ({ value: option.id, label: option.name }))]}
               expanded={expanded === 'year'} toggle={() => toggle('year')} select={yearId => select({ yearId: yearId || undefined, status: filters.status })} />
             {year ? <FilterField label="Month" value={filters.month ?? ''} options={[{ value: '', label: 'All months' }, ...months.map(value => ({ value, label: formatMonth(value) }))]}
@@ -104,10 +122,10 @@ function AttendanceHistory({ child }: { child: FamilyChild }) {
         {range !== '' && <Text accessibilityLiveRegion="polite" style={{ color: p.muted, fontSize: 12 }}>{range}</Text>}
       </View>
       {(offset > 0 || (result.data?.count ?? 0) > pageSize) && <View style={{ flexDirection: 'row', gap: 8 }}>
-        <View style={{ flex: 1 }}><Button label="Previous" secondary disabled={offset === 0 || result.loading} onPress={() => setOffset(Math.max(0, offset - pageSize))} /></View>
-        <View style={{ flex: 1 }}><Button label="Next" secondary disabled={result.loading || offset + pageSize >= (result.data?.count ?? 0)} onPress={() => setOffset(offset + pageSize)} /></View>
+        <View style={{ flex: 1 }}><Button label="Previous" secondary disabled={offset === 0 || result.loading} onPress={() => show(filters, Math.max(0, offset - pageSize))} /></View>
+        <View style={{ flex: 1 }}><Button label="Next" secondary disabled={result.loading || offset + pageSize >= (result.data?.count ?? 0)} onPress={() => show(filters, offset + pageSize)} /></View>
       </View>}
-      {result.loading ? <Skeleton rows={2} /> : result.error ? <ErrorCard message={result.error} retry={result.reload} />
+      {result.loading ? <Skeleton rows={2} /> : result.error ? <ErrorCard message={result.error} retry={refresh} />
         : result.data?.rows.length ? result.data.rows.map(row => {
           const tone = row.status === 'absent' ? p.danger : row.status === 'present' ? p.success : row.status === 'late' || row.status === 'half_day' ? p.warning : p.muted;
           return <View key={`${row.academic_year_id}:${row.attendance_date}`} style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center',

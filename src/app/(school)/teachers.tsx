@@ -25,7 +25,7 @@ export default function Teachers() {
     <ChildPicker />
     {family.loading ? <Skeleton rows={2} /> : family.error ? <ErrorCard message={family.error} retry={family.refresh} />
       : !child ? <Card><Text>No student profile is currently linked.</Text></Card> : result.loading ? <Skeleton rows={2} />
-        : result.error ? <ErrorCard message={result.error} retry={result.reload} /> : !data?.className ? <Card>
+        : result.error ? <ErrorCard message={result.error} retry={family.refresh} /> : !data?.className ? <Card>
           <Text style={{ fontWeight: '700' }}>Class placement unavailable</Text>
           <Text style={{ color: p.muted }}>Contact your school if you expect to see a class here.</Text>
         </Card> : <>

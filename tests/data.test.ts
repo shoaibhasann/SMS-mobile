@@ -229,3 +229,15 @@ describe('native exam schedule alerts', () => {
     expect(invalid.rpc).not.toHaveBeenCalled();
   });
 });
+
+describe('definitive family access denial',()=>{
+  it('marks a teacher-only/revoked account and an inactive profile as denied, but not a transport failure',async()=>{
+    const noRoles=mockClient();noRoles.patch('user_roles',{data:[],error:null});
+    await expect(readFamilyAccess(noRoles.client)).rejects.toMatchObject({name:'FamilyAccessDenied',message:expect.stringContaining('family access')});
+    const inactive=mockClient();inactive.patch('profiles',{data:{id:id(1),school_id:id(2),full_name:'QA',is_active:false},error:null});
+    await expect(readFamilyAccess(inactive.client)).rejects.toMatchObject({name:'FamilyAccessDenied'});
+    const network=mockClient();network.patch('user_roles',{data:null,error:{message:'network'}});
+    const failure=await readFamilyAccess(network.client).catch((error:Error)=>error);
+    expect(failure).toBeInstanceOf(Error);expect((failure as Error).name).not.toBe('FamilyAccessDenied');
+  });
+});

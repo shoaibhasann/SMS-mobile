@@ -22,6 +22,8 @@ const text = (value: unknown): value is string => typeof value === 'string' && !
 const nullableText = (value: unknown): value is string | null => value === null || typeof value === 'string';
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const denied = () => new Error('Your family access could not be verified. Sign in again or contact your school.');
+// Only definitive answers (no Guardian/Student role, inactive profile) get this; transport failures keep denied().
+const noAccess = () => Object.assign(new Error('This account has no family access in the SMS app. A Guardian or Student account is needed. Sign out, or contact your school.'), { name: 'FamilyAccessDenied' });
 const invalid = () => new Error('The saved school records could not be verified. Refresh to try again.');
 function cancelled(signal?: AbortSignal) {
   if (signal?.aborted) { const error = new Error('Request cancelled.'); error.name = 'AbortError'; throw error; }
@@ -45,6 +47,7 @@ async function scopedIdentity(client: SupabaseClient, signal?: AbortSignal) {
   const profile = await (signal ? query.abortSignal(signal) : query).maybeSingle();
   cancelled(signal);
   const row = record(profile.data);
+  if (!profile.error && row.id === user.id && row.is_active === false) throw noAccess();
   if (profile.error || row.id !== user.id || row.is_active !== true || !validUuid(row.school_id) || !nullableText(row.full_name)) throw denied();
   return { userId: user.id, schoolId: row.school_id, name: typeof row.full_name === 'string' && row.full_name.trim() ? row.full_name.trim() : 'School account' };
 }
@@ -78,7 +81,7 @@ export async function readFamilyAccess(client: SupabaseClient, signal?: AbortSig
     roles.add(row.role as FamilyRole);
   }
   const permitted = (['parent', 'student'] as const).filter(role => roles.has(role));
-  if (!permitted.length) throw denied();
+  if (!permitted.length) throw noAccess();
   await Promise.all(permitted.map(role => checkedRole(client, role, signal)));
   cancelled(signal);
   return { ...identity, roles: permitted };

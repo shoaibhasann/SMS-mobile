@@ -69,3 +69,13 @@ describe('Native MFA trust boundaries', () => {
     expect(client.rpc).toHaveBeenCalledWith('get_my_staff_mfa_status'); expect(client.from).not.toHaveBeenCalled();
   });
 });
+describe('server-rejected session token', () => {
+  const read = (reply: unknown) => readMfaStatus({ rpc: vi.fn(() => ({ abortSignal: vi.fn(async () => reply) })) } as unknown as SupabaseClient, 'a', new AbortController().signal);
+  it('marks a 401 or PostgREST JWT rejection so the caller can renew the session, and keeps other failures plain', async () => {
+    for (const reply of [{ data: null, status: 401, error: { message: 'JWT expired' } }, { data: null, status: 400, error: { code: 'PGRST301' } }, { data: null, error: { code: 'PGRST303' } }]) {
+      await expect(read(reply)).rejects.toMatchObject({ name: 'SessionRejected', message: expect.stringContaining('security session') });
+    }
+    const other = await read({ data: null, status: 500, error: { code: '500' } }).catch((error: Error) => error);
+    expect((other as Error).name).toBe('Error');
+  });
+});

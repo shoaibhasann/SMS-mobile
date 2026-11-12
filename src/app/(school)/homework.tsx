@@ -31,7 +31,7 @@ export default function Homework() {
   return <HomeworkDetail key={`${child.id}:${activity}`} child={child} activityId={activity} canSwitch={childId === undefined} />;
 }
 function HomeworkDetail({ child, activityId, canSwitch }: { child: FamilyChild; activityId: string; canSwitch: boolean }) {
-  const auth = useAuth(), p = usePalette(), alive = useRef(true), operation = useRef<AbortController | null>(null), working = useRef(false);
+  const auth = useAuth(), family = useFamily(), p = usePalette(), alive = useRef(true), operation = useRef<AbortController | null>(null), working = useRef(false);
   const [draft, setDraft] = useState<{ text: string; file: { path: string; name: string } | null } | null>(null);
   const [pendingOverride, setPending] = useState<HomeworkIntent | null | undefined>(undefined);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState(''), [storageBlocked, setStorageBlocked] = useState(false);
@@ -52,8 +52,9 @@ function HomeworkDetail({ child, activityId, canSwitch }: { child: FamilyChild; 
   const setFile = (value: { path: string; name: string } | null) => setDraft({ text, file: value });
   const editable = auth.role === 'student' && (saved?.status !== 'graded' || !!pending), locked = busy || !!pending || storageBlocked;
   const dirty = !pending && !storageBlocked && editable && (text !== (saved?.text_response ?? '') || file?.path !== (saved?.file_path ?? undefined));
-  usePreventRemove(busy || dirty, ({ repeat }) => {
-    if (busy) return;
+  // A failed read re-checks the linked children (a revoked link); with an unsent draft or a live submit it retries locally so the remount cannot drop them.
+  // Leaving while busy is safe: the submit intent is persisted first, and unmount aborts the operation and its uploaded object.
+  usePreventRemove(dirty, ({ repeat }) => {
     Alert.alert('Leave this draft?', 'Unsubmitted text will be discarded. Uploaded files stay private. Remove an unused attachment before leaving if you do not need it.', [{ text: 'Keep editing', style: 'cancel' }, { text: 'Discard draft', style: 'destructive', onPress: () => { if (alive.current) { setDraft(null); repeat(); } } }]);
   });
   async function pickFile() {
@@ -61,7 +62,7 @@ function HomeworkDetail({ child, activityId, canSwitch }: { child: FamilyChild; 
     working.current = true; setBusy(true); setError(''); const controller = new AbortController(); operation.current = controller;
     let cached: File | null = null;
     try {
-      const picked = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/jpeg', 'image/png'], copyToCacheDirectory: true, multiple: false });
+      const picked = await auth.whileExternal(() => DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/jpeg', 'image/png'], copyToCacheDirectory: true, multiple: false }));
       if (picked.canceled || !alive.current || controller.signal.aborted) return;
       const selected = picked.assets[0];
       if (!selected?.uri.startsWith(`${Paths.cache.uri.replace(/\/$/, '')}/`)) throw new Error('The selected file could not be copied into the app’s private cache.');
@@ -87,13 +88,15 @@ function HomeworkDetail({ child, activityId, canSwitch }: { child: FamilyChild; 
   async function submit() {
     if (!work || !editable || busy || !loaded.data || storageBlocked || working.current) return;
     working.current = true; setBusy(true); setError(''); setMessage(''); let intent: HomeworkIntent | null = pending, recovering = !!pending;
+    // Android's HTTP client has no timeout: bound the save like leave.ts so a stalled request becomes an unconfirmed, retryable intent.
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 20_000); operation.current = controller;
     try {
       const requestId = Crypto.randomUUID();
       intent = pending ?? await pendingStore.prepare(scope, { text, filePath: file?.path ?? null, fileName: file?.name ?? null, expectedRevision: saved?.revision ?? null, requestId });
       recovering ||= intent.requestId !== requestId;
       if (!alive.current) return;
       setPending(intent);
-      await submitHomework(auth.client!, auth.access!, auth.role, child, work, intent);
+      await submitHomework(auth.client!, auth.access!, auth.role, child, work, intent, controller.signal);
       await pendingStore.complete(scope, intent.requestId);
       if (alive.current) { setDraft(null); setPending(undefined); loaded.reload(); setMessage('Homework saved. Your teacher can now review it.'); }
     } catch (cause) {
@@ -102,27 +105,30 @@ function HomeworkDetail({ child, activityId, canSwitch }: { child: FamilyChild; 
         catch { if (alive.current) { setStorageBlocked(true); setError('Local request status could not be read. Reopen this homework before sending new work.'); } return; }
         recovering = true;
       }
-      if (intent && !recovering && definitiveHomeworkError(cause)) {
-        try { await pendingStore.complete(scope, intent.requestId); if (alive.current) setPending(null); }
+      // A retry may unlock only on codes submit_homework raises after its request-id lookup: they prove the earlier attempt never committed.
+      const code = (cause as { code?: string } | null)?.code ?? '';
+      if (intent && (recovering ? ['PT409', '22023', '23505', '23514'].includes(code) : definitiveHomeworkError(cause))) {
+        const kept = intent;
+        try { await pendingStore.complete(scope, kept.requestId); if (alive.current) { setDraft({ text: kept.text, file: kept.filePath ? { path: kept.filePath, name: kept.fileName! } : null }); setPending(null); } }
         catch { if (alive.current) setError('The local request status is unconfirmed. Retry the same request before editing.'); return; }
       }
       if (alive.current) setError(homeworkError(cause));
-    } finally { working.current = false; if (alive.current) setBusy(false); }
+    } finally { clearTimeout(timer); if (operation.current === controller) operation.current = null; working.current = false; if (alive.current) setBusy(false); }
   }
   return <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><Screen>
-    <BackArrow disabled={busy} onPress={closeHomework} />
+    <BackArrow onPress={closeHomework} />
     <Title title="Homework" />
     {canSwitch && <ChildPicker />}
-    {loaded.loading ? <Skeleton /> : loaded.error ? <ErrorCard message={loaded.error} retry={loaded.reload} /> : work && <>
+    {loaded.loading ? <Skeleton /> : loaded.error ? <ErrorCard message={loaded.error} retry={busy || dirty ? loaded.reload : family.refresh} /> : work && <>
       <Card style={{ backgroundColor: p.soft }}>
         <Text accessibilityRole="header" style={{ fontSize: 22, lineHeight: 30, fontWeight: '700' }}>{work.title}</Text>
         <Text style={{ color: p.muted, fontSize: 12 }}>{work.dueDate ? `Due ${new Date(`${work.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { dateStyle: 'medium', timeZone: 'UTC' })}` : 'No due date'}{work.maxMarks !== null ? ` · ${work.maxMarks} marks` : ''}</Text>
         {work.description && <Text>{work.description}</Text>}
       </Card>
-      {message && <Text accessibilityRole="alert" style={{ color: p.success }}>{message}</Text>}
+      {message && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: p.success }}>{message}</Text>}
       {error && <ErrorCard message={error} />}
       {pending && <Card><Text style={{ color: p.warning }}>Submission not confirmed yet. Retry to send the same response and attachment.</Text></Card>}
-      {saved && <Card><Text style={{ color: saved.status === 'graded' ? p.success : p.primary, fontWeight: '700' }}>{saved.status === 'graded' ? 'Reviewed by your teacher' : 'Submitted for review'}</Text><Text style={{ color: p.muted }}>Saved {new Date(saved.submitted_at).toLocaleString()}</Text>
+      {saved && <Card><Text style={{ color: saved.status === 'graded' ? p.success : p.primary, fontWeight: '700' }}>{saved.status === 'graded' ? 'Reviewed by your teacher' : 'Submitted for review'}</Text><Text style={{ color: p.muted }}>Saved {new Date(saved.submitted_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} IST</Text>
         {saved.status === 'graded' && <><Text style={{ fontSize: 22, fontWeight: '700' }}>{saved.marks !== null ? `${saved.marks}${work.maxMarks !== null ? ` / ${work.maxMarks}` : ''}` : 'Feedback only'}</Text><Text>{saved.feedback || 'No written feedback.'}</Text></>}
       </Card>}
       {editable ? <Card><Text nativeID="homework-response" style={{ fontWeight: '600' }}>Your response</Text><TextInput accessibilityLabel="Your homework response" accessibilityLabelledBy="homework-response" value={text} onChangeText={setText} multiline maxLength={10000} editable={!locked} textAlignVertical="top"

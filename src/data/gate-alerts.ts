@@ -28,7 +28,7 @@ function checkError(error: { code?: string } | null) {
   throw new GateAlertError('The change could not be confirmed. Refresh saved settings before retrying.');
 }
 
-// The Auth provider supplies one immutable-JWT familyClient, never a shared mutable Auth client.
+// The Auth provider supplies one account-bound familyClient (same-user token refreshes only), never a shared mutable Auth client.
 export async function loadGateAlertPreferences(client: SupabaseClient, userId: string, signal?: AbortSignal): Promise<GateAlertPreference[]> {
   if (!uuid(userId)) throw invalid(); cancelled(signal);
   const query = client.rpc('get_my_gate_alert_preferences');

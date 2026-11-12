@@ -82,6 +82,7 @@ function failure(error: { code?: string } | null, submit: boolean) {
   const message = ['PGRST202', '42883'].includes(code) ? 'Leave requests need a school update. Contact your administrator.'
     : code === '42501' ? 'Your access to this student or school could not be verified. Refresh school access.'
       : code === 'PT409' ? 'This request conflicts with a saved request. Refresh history; pending or approved dates cannot overlap.'
+        : code === 'PT422' ? 'This student has no active class placement for the current school year. Contact the school office.'
         : code === '22023' ? 'The school could not accept these dates or reason. Dates must be within the current academic year.'
           : submit ? 'Submission could not be confirmed. Retry this same request; your dates and reason are kept.'
             : 'Leave history could not be loaded. Refresh to try again.';

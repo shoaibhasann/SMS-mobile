@@ -15,6 +15,7 @@ const shortcuts = [
   { label: 'Leave', hint: 'Leave requests', icon: CalendarDays, path: '/(school)/leave' },
 ] as const;
 const dueDate = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone: 'UTC' });
+const schoolToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
 export default function Learning() {
   const { access, client, role } = useAuth(), family = useFamily(), p = usePalette();
@@ -30,12 +31,13 @@ export default function Learning() {
     return { ...work, statuses };
   }, [access, child, client, offset, role]);
   const work = useLoad(`${access?.userId}:${role}:${child?.id}:${offset}`, read);
+  const today = schoolToday();
 
-  return <Screen>
+  return <Screen bottomInset={false}>
     <Title title="Learning" subtitle="Homework, progress and school requests" />
     {child && <ChildPicker />}
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-      {shortcuts.map(({ label, hint, icon: Icon, path }) => <Pressable key={path} accessibilityRole="button" accessibilityLabel={hint} onPress={() => router.push(path)}
+      {shortcuts.map(({ label, hint, icon: Icon, path }) => <Pressable key={path} accessibilityRole="button" accessibilityLabel={label} accessibilityHint={hint} onPress={() => router.push(path)}
         style={({ pressed }) => ({ minWidth: 86, flexGrow: 1, flexBasis: 86, minHeight: 56, gap: 4, alignItems: 'center', justifyContent: 'center', padding: 8,
           borderRadius: 12, borderWidth: 1, borderColor: p.border, backgroundColor: pressed ? p.soft : p.surface })}>
         <Icon accessible={false} size={20} color={p.primary} /><Text style={{ fontWeight: '600', textAlign: 'center' }}>{label}</Text>
@@ -48,20 +50,22 @@ export default function Learning() {
           <Text style={{ color: p.muted }}>{role === 'parent' ? 'Current session · View assignments and teacher feedback' : 'Current session · Open an assignment to respond'}</Text>
         </View>
         {work.loading ? <Skeleton rows={2} /> : work.error ? <ErrorCard message={work.error} retry={work.reload} /> : work.data && <>
-          {work.data.rows.length === 0 ? <Card><Text style={{ fontWeight: '700' }}>No homework yet</Text><Text style={{ color: p.muted }}>Published assignments for this class will appear here.</Text></Card>
+          {!work.data.placed ? <Card><Text style={{ fontWeight: '700' }}>No current class placement</Text><Text style={{ color: p.muted }}>Homework appears after the school places this student in a class for the current session. Contact your school if you expected homework here.</Text></Card>
+            : work.data.rows.length === 0 ? <Card><Text style={{ fontWeight: '700' }}>No homework yet</Text><Text style={{ color: p.muted }}>Published assignments for this class will appear here.</Text></Card>
             : <Card style={{ gap: 0, padding: 0, overflow: 'hidden' }}>
               {work.data.rows.map((row, index) => {
                 const state = work.data?.statuses?.get(row.id);
                 const status = state === 'graded' ? 'Reviewed' : state === 'submitted' ? 'Submitted' : work.data?.statuses ? 'Not submitted' : null;
                 const date = row.dueDate ? `Due ${dueDate.format(new Date(`${row.dueDate}T00:00:00Z`))}` : 'No due date';
-                return <Pressable key={row.id} accessibilityRole="button" accessibilityLabel={[row.title, date, status].filter(Boolean).join(', ')}
+                const overdue = !!work.data?.statuses && !!row.dueDate && row.dueDate < today && state !== 'submitted' && state !== 'graded'; // unknown status is never overdue
+                return <Pressable key={row.id} accessibilityRole="button" accessibilityLabel={[row.title, date, overdue && 'Overdue', status].filter(Boolean).join(', ')}
                   onPress={() => router.push({ pathname: '/(school)/homework', params: { child: child.id, activity: row.id } })}
                   style={({ pressed }) => ({ minHeight: 72, paddingVertical: 12, paddingHorizontal: 14, borderTopWidth: index ? 1 : 0, borderColor: p.border,
                     backgroundColor: pressed ? p.soft : p.surface, flexDirection: 'row', alignItems: 'center', gap: 12 })}>
                   <BookOpen accessible={false} color={p.primary} size={20} />
                   <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                     <Text style={{ fontWeight: '700' }}>{row.title}</Text>
-                    <Text style={{ color: p.muted, fontSize: 12 }}>{date}{row.maxMarks !== null ? ` · ${row.maxMarks} marks` : ''}</Text>
+                    <Text style={{ color: overdue ? p.danger : p.muted, fontSize: 12, fontWeight: overdue ? '700' : undefined }}>{overdue ? 'Overdue · ' : ''}{date}{row.maxMarks !== null ? ` · ${row.maxMarks} marks` : ''}</Text>
                     {status && <Text style={{ color: state === 'graded' ? p.success : state === 'submitted' ? p.primary : p.muted, fontSize: 12, fontWeight: '600' }}>{status}</Text>}
                   </View>
                   <ChevronRight accessible={false} size={18} color={p.muted} />

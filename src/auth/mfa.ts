@@ -26,7 +26,12 @@ export async function readMfaStatus(client: SupabaseClient, userId: string, sign
   const query = client.rpc('get_my_staff_mfa_status');
   const result = await (signal ? query.abortSignal(signal) : query);
   cancelled(signal);
-  if (result.error) throw denied();
+  if (result.error) {
+    const error = denied();
+    // An expired or rejected JWT: the provider renews the session once instead of reporting a connection problem.
+    if (result.status === 401 || ['PGRST301', 'PGRST303'].includes(result.error.code ?? '')) error.name = 'SessionRejected';
+    throw error;
+  }
   return parseMfaStatus(result.data, userId);
 }
 async function ownedSession(primary: SupabaseClient, userId: string, signal?: AbortSignal) {

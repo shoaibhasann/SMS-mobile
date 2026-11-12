@@ -4,7 +4,7 @@ import { getFamilyExamSchedule } from '../data';
 import { BackArrow, Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from './primitives';
 import { useLoad } from './use-load';
 
-const dateFormat = new Intl.DateTimeFormat('en-IN', { dateStyle: 'long', timeZone: 'Asia/Kolkata' });
+const dateFormat = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' });
 
 export function ExamSchedule({ assessment, back }: { assessment: string | string[]; back: () => void }) {
   const { access, client, role, revision } = useAuth();

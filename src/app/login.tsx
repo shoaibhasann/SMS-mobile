@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
+import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect } from 'expo-router';
 import { ArrowRight, CircleAlert, Eye, EyeOff, LockKeyhole, Mail } from 'lucide-react-native';
@@ -9,6 +9,7 @@ import { Screen, Skeleton, Text } from '../ui/primitives';
 import { AuthProblem } from '../ui/auth-problem';
 import { usePalette } from '../ui/theme';
 import { MfaVerification } from '../ui/mfa-verification';
+import logo from '../../assets/sms-logo.png';
 
 export default function Login() {
   const auth = useAuth(), p = usePalette(), { height, fontScale } = useWindowDimensions();
@@ -44,20 +45,21 @@ export default function Login() {
       <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} contentContainerStyle={[styles.scroll, { justifyContent: keyboard || compact || largeText ? 'flex-start' : 'center', paddingTop: keyboard || compact ? 24 : 40, paddingBottom: keyboard ? 24 : 40 }]} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
           <View style={[styles.masthead, { marginBottom: keyboard ? 24 : compact ? 32 : 40 }]}>
+            {!keyboard && <Image source={logo} style={styles.logo} />}
             <Text style={styles.wordmark}>SMS</Text>
             <Text style={{ color: p.muted, fontSize: 12, lineHeight: 18, textAlign: 'center' }}>School Management System</Text>
           </View>
           <View style={styles.intro}><Text accessibilityRole="header" style={styles.heading}>Welcome back</Text><Text style={{ color: p.muted, fontSize: 14, lineHeight: 22, textAlign: 'center' }}>Sign in to your school account.</Text></View>
-          {message && <View style={[styles.error, { backgroundColor: p.bg }]}><CircleAlert size={18} color={p.danger} /><Text accessibilityRole="alert" style={{ color: p.danger, flex: 1 }}>{message}</Text></View>}
+          {message && <View style={[styles.error, { backgroundColor: p.bg }]}><CircleAlert size={18} color={p.danger} /><Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ color: p.danger, flex: 1 }}>{message}</Text></View>}
           <View style={{ gap: 16 }}>
             <View style={{ gap: 8 }}>
-              <Text nativeID="email-label" style={styles.label}>Email address</Text>
+              <Text nativeID="email-label" style={styles.label}>Email or mobile number</Text>
               <View style={field('email')}><Mail size={19} strokeWidth={1.7} color={focused === 'email' ? p.primary : p.muted} />
-                <TextInput accessibilityLabel="Email address" accessibilityLabelledBy="email-label" autoComplete="username" importantForAutofill="yes" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} editable={!busy} value={email} onChangeText={setEmail} style={input} placeholder="you@school.com" placeholderTextColor={p.muted} underlineColorAndroid="transparent" returnKeyType="next" onSubmitEditing={() => passwordInput.current?.focus()} onFocus={() => setFocused('email')} onBlur={() => setFocused(null)} />
+                <TextInput accessibilityLabel="Email or mobile number" accessibilityLabelledBy="email-label" autoComplete="username" importantForAutofill="yes" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} editable={!busy} value={email} onChangeText={setEmail} style={input} placeholder="you@school.com or 98765 43210" placeholderTextColor={p.muted} underlineColorAndroid="transparent" returnKeyType="next" onSubmitEditing={() => passwordInput.current?.focus()} onFocus={() => setFocused('email')} onBlur={() => setFocused(null)} />
               </View>
             </View>
             <View style={{ gap: 8 }}>
-              <View style={styles.passwordHeading}><Text nativeID="password-label" style={styles.label}>Password</Text><Pressable accessibilityRole="link" accessibilityLabel="Forgot password? Opens the SMS website" disabled={busy} hitSlop={4} onPress={() => void recover()} style={styles.recovery}><Text style={{ color: p.primary, fontWeight: '500', fontSize: 12, lineHeight: 20 }}>Forgot password?</Text></Pressable></View>
+              <View style={styles.passwordHeading}><Text nativeID="password-label" style={styles.label}>Password</Text><Pressable accessibilityRole="link" accessibilityLabel="Forgot or set password? Opens the SMS website" disabled={busy} hitSlop={4} onPress={() => void recover()} style={styles.recovery}><Text style={{ color: p.primary, fontWeight: '500', fontSize: 12, lineHeight: 20 }}>Forgot or set password?</Text></Pressable></View>
               <View style={field('password')}><LockKeyhole size={19} strokeWidth={1.7} color={focused === 'password' ? p.primary : p.muted} />
                 <TextInput ref={passwordInput} accessibilityLabel="Password" accessibilityLabelledBy="password-label" autoComplete="current-password" importantForAutofill="yes" secureTextEntry={!show} autoCapitalize="none" autoCorrect={false} editable={!busy} value={password} onChangeText={setPassword} style={input} placeholder="Enter your password" placeholderTextColor={p.muted} underlineColorAndroid="transparent" onSubmitEditing={() => void submit()} returnKeyType="go" onFocus={() => setFocused('password')} onBlur={() => setFocused(null)} />
                 <Pressable accessibilityRole="button" accessibilityLabel={show ? 'Hide password' : 'Show password'} accessibilityState={{ disabled: busy, checked: show }} disabled={busy} onPress={() => setShow(value => !value)} style={({ pressed }) => [styles.reveal, { opacity: pressed ? 0.6 : 1 }]}>{show ? <EyeOff color={p.muted} size={20} strokeWidth={1.7} /> : <Eye color={p.muted} size={20} strokeWidth={1.7} />}</Pressable>
@@ -68,7 +70,11 @@ export default function Login() {
             <Text style={{ color: p.onPrimary, fontSize: 15, lineHeight: 23, fontWeight: '600', flexShrink: 1, textAlign: 'center' }}>{busy ? 'Signing in…' : 'Sign in'}</Text>{busy ? <ActivityIndicator size="small" color={p.onPrimary} /> : <ArrowRight color={p.onPrimary} size={19} />}
           </Pressable>
           <View style={styles.footer}><LockKeyhole size={13} strokeWidth={1.7} color={p.muted} /><Text style={{ color: p.muted, fontSize: 12, lineHeight: 19, flexShrink: 1 }}>School-approved accounts only.</Text></View>
-          {!keyboard && <Text style={{ color: p.muted, textAlign: 'center', fontSize: 12, lineHeight: 20, marginTop: 8 }}>Need access? Contact your school.</Text>}
+          {!keyboard && <View style={{ gap: 6, marginTop: 8 }}>
+            <Text style={[styles.hint, { color: p.muted }]}>Invited with a mobile number? Set an app password in Account settings on the SMS website, then sign in here with that mobile number.</Text>
+            <Text style={[styles.hint, { color: p.muted }]}>Signed up with Google? Use Forgot or set password with the same Gmail to create an app password.</Text>
+            <Text style={[styles.hint, { color: p.muted }]}>Need access? Contact your school.</Text>
+          </View>}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -79,6 +85,7 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1, paddingHorizontal: 24 },
   content: { width: '100%', maxWidth: 400, alignSelf: 'center' },
   masthead: { alignItems: 'center', gap: 4 },
+  logo: { width: 72, height: 72, marginBottom: 8 },
   wordmark: { fontSize: 30, lineHeight: 37, fontWeight: '800', letterSpacing: -1.5, textAlign: 'center' },
   intro: { alignItems: 'center', gap: 8, marginBottom: 28 },
   heading: { fontSize: 27, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8, textAlign: 'center' },
@@ -91,4 +98,5 @@ const styles = StyleSheet.create({
   submit: { minHeight: 56, paddingHorizontal: 22, paddingVertical: 15, borderRadius: 15, marginTop: 22, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
   error: { borderRadius: 14, padding: 14, gap: 10, flexDirection: 'row', alignItems: 'flex-start', marginBottom: 18 },
   footer: { flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', marginTop: 20 },
+  hint: { textAlign: 'center', fontSize: 12, lineHeight: 20 },
 });
