@@ -4,7 +4,7 @@ Separate React Native application for verified Guardian and Student accounts. Bu
 
 ## Current pilot slice
 
-- Email/password sign-in against the existing Supabase project; no automatic signup, guardian linking or staff access.
+- Email or verified-mobile + password sign-in against the existing Supabase project; no automatic signup, guardian linking or staff access. Phone-only Guardians set an app password in guardian contact settings on the website; Google-only Students set one through Forgot or set password with the same Gmail.
 - Server-checked active school/family roles, linked-child selection, read-only retained attendance and refresh/pagination.
 - Existing family Notifications with All/Unread, independent saved read state, mark one/all, older history and native result/leave detail targets.
 - Optional per-Guardian/child Arrival and Exit inbox choices, both OFF by default. The current inbox uses the shared v8 API. Older installed apps keep their versioned endpoints. Absent alerts remain independent of gate choices.
@@ -14,7 +14,7 @@ Separate React Native application for verified Guardian and Student accounts. Bu
 - Native Android Firebase Installation ID registration with explicit phone permission, versioned preference enable, private installation proof, remote revoke compatibility, logout/account-switch cleanup and a fixed inbox-only push destination.
 - Encrypted native session storage, no saved child/attendance/inbox cache, stale-request cancellation and session-bound API clients.
 
-Term report cards, past-session homework history, original attachment downloads, Hindi translations, phone OTP login and iOS push remain later app slices. Homework uploads use private Storage; authenticated original downloads remain on the school website. App registration does not prove provider acceptance or phone display.
+Term report cards, past-session homework history, original attachment downloads, Hindi translations, in-app phone OTP login and iOS push remain later app slices. Homework uploads use private Storage; authenticated original downloads remain on the school website. App registration does not prove provider acceptance or phone display.
 
 ## Run locally
 

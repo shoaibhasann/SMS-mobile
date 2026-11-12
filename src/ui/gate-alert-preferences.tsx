@@ -67,9 +67,9 @@ function GatePreference({ client, userId, initial, showStudentName, onChanged, o
       <Text>{field === 'arrival_enabled' ? 'Arrival' : 'Exit'}</Text>
       <Switch accessibilityLabel={`${field === 'arrival_enabled' ? 'Arrival' : 'Exit'} alerts for ${current.student_name}`}
         value={current[field]} disabled={busy || locked || !!error} onValueChange={value => void save(field, value)}
-        trackColor={{ false: p.border, true: p.primary }} />
+        trackColor={{ false: p.border, true: p.primary }} thumbColor={current[field] ? p.onPrimary : p.muted} ios_backgroundColor={p.border} />
     </View>)}
     {busy && <Text accessibilityRole="progressbar" style={{ color: p.muted }}>Saving settings…</Text>}
-    {!!error && <Text accessibilityRole="alert" style={{ color: p.danger }}>{error} Use “Refresh gate alert settings” before another change.</Text>}
+    {!!error && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ color: p.danger }}>{error} Use “Refresh gate alert settings” before another change.</Text>}
   </Card>;
 }

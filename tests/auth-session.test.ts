@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { AuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js';
 import { createSessionGate } from '../src/auth/session-gate';
 import type { FamilyAccess } from '../src/data';
 import { AuthProvider, useAuth } from '../src/auth/provider';
@@ -20,14 +20,16 @@ const native = vi.hoisted(() => {
     getSession: vi.fn(async () => ({ data: { session }, error: null })),
     onAuthStateChange: vi.fn((callback: AuthListener) => { authListener = callback; return { data: { subscription: { unsubscribe: vi.fn() } } }; }),
     startAutoRefresh: vi.fn(), stopAutoRefresh: vi.fn(),
-    signInWithPassword: vi.fn<(credentials: { email: string; password: string }) => Promise<{ error: unknown }>>(),
+    signInWithPassword: vi.fn<(credentials: { email?: string; phone?: string; password: string }) => Promise<{ error: unknown }>>(),
     signOut: vi.fn<(options: { scope: string }) => Promise<{ error: unknown }>>(),
+    refreshSession: vi.fn<() => Promise<{ data: { session: Session | null; user: { id: string } | null }; error: unknown }>>(),
   } };
-  return { app, client,
+  return { app, client, store: new Map<string, string>(),
     access: vi.fn<(client: unknown, signal?: AbortSignal) => Promise<FamilyAccess>>(),
     mfa: vi.fn<(client: unknown, userId: string, signal?: AbortSignal) => Promise<MfaStatus>>(),
     verify: vi.fn<() => Promise<void>>(),
     bound: vi.fn<(token: string) => SupabaseClient>(),
+    rebind: vi.fn((client: SupabaseClient, token: string) => { if (token) (client as unknown as { sessionToken: string }).sessionToken = token; }),
     cleanup: vi.fn<() => Promise<{ nativeCleared: boolean }>>(),
     disconnect: vi.fn<(owner: unknown) => Promise<{ nativeCleared: boolean; serverRevoked: boolean }>>(),
     getSavedSession() { return session; },
@@ -37,7 +39,11 @@ const native = vi.hoisted(() => {
   };
 });
 vi.mock('react-native', () => ({ AppState: native.app }));
-vi.mock('../src/auth/client', () => ({ configError: null, schoolClient: () => native.client, familyClient: native.bound }));
+vi.mock('expo-secure-store', () => ({ WHEN_UNLOCKED_THIS_DEVICE_ONLY: 0,
+  getItemAsync: vi.fn(async (key: string) => native.store.get(key) ?? null),
+  setItemAsync: vi.fn(async (key: string, value: string) => { native.store.set(key, value); }),
+  deleteItemAsync: vi.fn(async (key: string) => { native.store.delete(key); }) }));
+vi.mock('../src/auth/client', () => ({ configError: null, schoolClient: () => native.client, familyClient: native.bound, rebindFamilyClient: native.rebind, allowSessionRenewal: vi.fn() }));
 vi.mock('../src/data', () => ({ readFamilyAccess: native.access }));
 vi.mock('../src/auth/mfa', () => ({ readMfaStatus: native.mfa, verifyMfa: native.verify }));
 vi.mock('../src/push', () => ({ cleanupSavedPushOnAuthLoss: native.cleanup, disconnectNativePush: native.disconnect }));
@@ -45,14 +51,16 @@ vi.mock('../src/push', () => ({ cleanupSavedPushOnAuthLoss: native.cleanup, disc
 const guardian: FamilyAccess = { userId: 'guardian-a', schoolId: 'school-a', name: 'Guardian A', roles: ['parent', 'student'] };
 const sessionA: Session = { access_token: 'synthetic-session-a', user: { id: guardian.userId } };
 let root: Root | null = null, node: HTMLDivElement | null = null, auth: ReturnType<typeof useAuth>;
-function Probe() { const value = useAuth(); useEffect(() => { auth = value; }, [value]); return null; }
+let statuses: string[] = [], workspaces: string[] = [];
+function Probe() { const value = useAuth(); useEffect(() => { auth = value; statuses.push(value.status); workspaces.push(`${value.status}:${value.role}`); }, [value]); return null; }
 async function mount() {
   node = document.createElement('div'); document.body.append(node); root = createRoot(node);
   await act(async () => { root!.render(createElement(AuthProvider, null, createElement(Probe))); });
 }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  vi.clearAllMocks(); native.setSession(sessionA); native.app.currentState = 'active';
+  vi.clearAllMocks(); native.setSession(sessionA); native.app.currentState = 'active'; statuses = []; workspaces = []; native.store.clear();
+  native.client.auth.refreshSession.mockReset();
   native.access.mockReset().mockResolvedValue(guardian);
   native.mfa.mockReset().mockImplementation(async (_client, userId) => ({ user_id: userId, required: false, allowed: true, action: 'none', current_aal: 'aal1', verified_totp_count: 0 }));
   native.verify.mockReset().mockResolvedValue(undefined);
@@ -249,6 +257,60 @@ describe('AuthProvider session and identity boundary', () => {
     expect(auth.client).not.toBe(oldClient); expect(native.bound).toHaveBeenLastCalledWith(refreshed.access_token);
   });
 
+  it('rebinds the refreshed token into the same client on a routine TOKEN_REFRESHED for the same owner', async () => {
+    await mount(); expect(auth.status).toBe('ready'); statuses = [];
+    const client = auth.client, revision = auth.revision;
+    const refreshed: Session = { ...sessionA, access_token: 'refreshed' };
+    await act(async () => { native.emitAuth('TOKEN_REFRESHED', refreshed); });
+    expect(statuses).not.toContain('checking');
+    expect(auth.status).toBe('ready'); expect(auth.access?.userId).toBe(guardian.userId);
+    expect(auth.client).toBe(client); expect(auth.revision).toBe(revision); expect(auth.tokenRevision).toBe(1);
+    expect(native.rebind).toHaveBeenLastCalledWith(client, 'refreshed');
+    expect((auth.client as unknown as { sessionToken: string }).sessionToken).toBe('refreshed');
+    expect(native.bound).toHaveBeenCalledOnce();
+    expect(native.client.auth.getSession).toHaveBeenCalledOnce();
+    expect(native.mfa).toHaveBeenCalledOnce(); expect(native.access).toHaveBeenCalledOnce();
+  });
+  it('reaches ready without a refresh storm when a fast device clock makes every getSession refresh', async () => {
+    let refreshes = 0;
+    native.client.auth.getSession.mockImplementation(async () => {
+      // auth-js emits TOKEN_REFRESHED before getSession resolves; stop after 20 to keep a regression finite.
+      if (refreshes < 20) native.emitAuth('TOKEN_REFRESHED', { ...sessionA, access_token: `skewed-${++refreshes}` });
+      return { data: { session: native.getSavedSession() }, error: null };
+    });
+    await mount();
+    expect(auth.status).toBe('ready'); expect(refreshes).toBe(1);
+    expect(native.client.auth.getSession).toHaveBeenCalledOnce();
+    expect(native.bound).toHaveBeenCalledExactlyOnceWith('skewed-1');
+    // The 30 s auto-refresh ticker keeps refreshing under skew; each one only rebinds.
+    await act(async () => { native.emitAuth('TOKEN_REFRESHED', { ...sessionA, access_token: 'ticker' }); });
+    expect(auth.status).toBe('ready'); expect(native.client.auth.getSession).toHaveBeenCalledOnce();
+    expect((auth.client as unknown as { sessionToken: string }).sessionToken).toBe('ticker');
+  });
+  it('rebinds a token refreshed while the access read was still in flight before exposing the client', async () => {
+    const access = deferred<FamilyAccess>();
+    native.access.mockReturnValueOnce(access.promise);
+    await mount(); expect(auth.status).toBe('checking');
+    await act(async () => { native.emitAuth('TOKEN_REFRESHED', { ...sessionA, access_token: 'mid-read' }); });
+    await act(async () => { access.resolve(guardian); });
+    expect(auth.status).toBe('ready'); expect(native.access).toHaveBeenCalledOnce();
+    expect((auth.client as unknown as { sessionToken: string }).sessionToken).toBe('mid-read');
+  });
+  it('still clears and rechecks on SIGNED_IN for the same user', async () => {
+    await mount(); expect(auth.status).toBe('ready'); statuses = [];
+    await act(async () => { native.emitAuth('SIGNED_IN', { ...sessionA, access_token: 'signed-in' }); });
+    expect(statuses[0]).toBe('checking'); expect(auth.status).toBe('ready');
+    expect(native.bound).toHaveBeenLastCalledWith('signed-in'); expect(native.access).toHaveBeenCalledTimes(2);
+  });
+  it('still fails closed when a refreshed token belongs to a different user', async () => {
+    await mount(); expect(auth.status).toBe('ready'); statuses = [];
+    const other: Session = { access_token: 'other-user', user: { id: 'guardian-b' } };
+    native.access.mockResolvedValueOnce({ ...guardian, userId: 'guardian-b' });
+    await act(async () => { native.emitAuth('TOKEN_REFRESHED', other); });
+    expect(statuses[0]).toBe('checking');
+    expect(auth.status).toBe('error'); expect(auth.client).toBeNull(); expect(auth.access).toBeNull();
+  });
+
   it('keeps signed-out autofill fields mounted while Android opens and closes the credential picker', async () => {
     native.setSession(null);
     await mount(); expect(auth.status).toBe('signedOut');
@@ -311,6 +373,20 @@ describe('AuthProvider session and identity boundary', () => {
     expect(native.disconnect.mock.calls.at(-1)?.[0]).toEqual({ client: oldClient, userId: guardian.userId, role: 'parent' });
   });
 
+  it('signs a phone-only guardian in with a verified mobile number and app password', async () => {
+    native.client.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    await mount(); expect(auth.status).toBe('signedOut');
+    await act(async () => { await expect(auth.signIn('12345', 'app password')).rejects.toThrow('valid school email or 10-digit mobile'); });
+    expect(native.client.auth.signInWithPassword).not.toHaveBeenCalled(); expect(auth.status).toBe('signedOut');
+    native.client.auth.signInWithPassword.mockImplementation(async () => {
+      native.client.auth.getSession.mockResolvedValue({ data: { session: sessionA }, error: null });
+      native.emitAuth('SIGNED_IN', sessionA); return { error: null };
+    });
+    await act(async () => { await auth.signIn(' 98765 43210 ', 'app password'); });
+    expect(native.client.auth.signInWithPassword).toHaveBeenCalledExactlyOnceWith({ phone: '+919876543210', password: 'app password' });
+    expect(auth.status).toBe('ready');
+  });
+
   it('rejects stale auth actions from a previous account rather than disconnecting the current guardian', async () => {
     await mount(); const previousSignOut = auth.signOut, previousChooseRole = auth.chooseRole;
     await act(async () => { await auth.signOut(); });
@@ -348,5 +424,137 @@ describe('AuthProvider session and identity boundary', () => {
     await act(async () => { await auth.signOut(); });
     expect(native.disconnect).toHaveBeenLastCalledWith({ client: oldClient, userId: guardian.userId, role: 'parent' });
     expect(auth.status).toBe('signedOut');
+  });
+});
+
+describe('App-opened external activities (Android document picker)', () => {
+  it('keeps the workspace mounted while the picker backgrounds the app, then rechecks access in place', async () => {
+    await mount(); expect(auth.status).toBe('ready'); statuses = [];
+    const picker = deferred<string>();
+    let picked!: Promise<string>;
+    act(() => { picked = auth.whileExternal(() => picker.promise); });
+    act(() => native.emitApp('background'));
+    expect(auth.status).toBe('ready'); expect(auth.foreground).toBe(true); expect(auth.client).not.toBeNull();
+    expect(native.client.auth.stopAutoRefresh).not.toHaveBeenCalled();
+    // Android resolves the picker (onActivityResult) before the activity resumes.
+    await act(async () => { picker.resolve('report.pdf'); });
+    await expect(picked).resolves.toBe('report.pdf');
+    await act(async () => { native.emitApp('active'); });
+    expect(statuses).not.toContain('checking');
+    expect(auth.status).toBe('ready'); expect(auth.foreground).toBe(true);
+    expect(native.access).toHaveBeenCalledTimes(2);
+  });
+  it('still fails closed when the in-place recheck after the picker cannot verify access', async () => {
+    await mount(); expect(auth.status).toBe('ready');
+    const picker = deferred<void>();
+    act(() => { void auth.whileExternal(() => picker.promise); });
+    act(() => native.emitApp('background'));
+    native.access.mockRejectedValueOnce(new Error('Access revoked.'));
+    await act(async () => { native.emitApp('active'); picker.resolve(); });
+    expect(auth.status).toBe('error'); expect(auth.client).toBeNull(); expect(auth.access).toBeNull();
+  });
+  it('blanks the next ordinary background once the picker round-trip has finished', async () => {
+    await mount();
+    await act(async () => { await auth.whileExternal(async () => { native.emitApp('background'); }); });
+    await act(async () => { native.emitApp('active'); });
+    expect(auth.status).toBe('ready');
+    act(() => native.emitApp('background'));
+    expect(auth.status).toBe('checking'); expect(auth.foreground).toBe(false); expect(auth.client).toBeNull();
+  });
+});
+
+describe('AuthProvider workspace restore, denial copy and rejected-token recovery', () => {
+  const roleKey = 'sms.family.role.v1';
+  async function remount() { await act(async () => root?.unmount()); node?.remove(); await mount(); }
+  it('reopens the last chosen workspace for the same user after a cold start', async () => {
+    await mount(); expect(auth).toMatchObject({ status: 'ready', role: 'parent' });
+    await act(async () => { await auth.chooseRole('student'); });
+    expect(auth).toMatchObject({ status: 'ready', role: 'student' });
+    await remount();
+    expect(auth).toMatchObject({ status: 'ready', role: 'student' });
+  });
+  it('ignores a saved workspace for another user or a role the account no longer holds', async () => {
+    native.store.set(roleKey, JSON.stringify({ userId: 'someone-else', role: 'student' }));
+    await mount(); expect(auth).toMatchObject({ status: 'ready', role: 'parent' });
+    native.store.set(roleKey, JSON.stringify({ userId: guardian.userId, role: 'student' }));
+    native.access.mockResolvedValue({ ...guardian, roles: ['parent'] });
+    await remount(); expect(auth).toMatchObject({ status: 'ready', role: 'parent' });
+  });
+  it('tells a denied account it has no family access instead of blaming the connection', async () => {
+    native.access.mockRejectedValueOnce(Object.assign(new Error('This account has no family access in the SMS app.'), { name: 'FamilyAccessDenied' }));
+    await mount();
+    expect(auth).toMatchObject({ status: 'error', error: 'This account has no family access in the SMS app.', recovery: 'endSession' });
+    native.access.mockRejectedValueOnce(new Error('Network unavailable.'));
+    await act(async () => { auth.refresh(); });
+    expect(auth).toMatchObject({ status: 'error', error: 'Could not verify school access. Check your connection and try again.' });
+  });
+  it('renews a server-rejected token once and retries the access read with the new token', async () => {
+    const renewed: Session = { access_token: 'renewed', user: { id: guardian.userId } };
+    native.mfa.mockRejectedValueOnce(Object.assign(new Error('Your security session changed.'), { name: 'SessionRejected' }));
+    native.client.auth.refreshSession.mockImplementation(async () => {
+      native.emitAuth('TOKEN_REFRESHED', renewed);
+      return { data: { session: renewed, user: renewed.user }, error: null };
+    });
+    await mount();
+    expect(auth.status).toBe('ready'); expect(native.client.auth.refreshSession).toHaveBeenCalledOnce();
+    expect(native.bound).toHaveBeenLastCalledWith('renewed');
+    expect((auth.client as unknown as { sessionToken: string }).sessionToken).toBe('renewed');
+  });
+  it('shows a session-renewal message, not a connection error, when the rejected token cannot be renewed for this user', async () => {
+    native.mfa.mockRejectedValue(Object.assign(new Error('Your security session changed.'), { name: 'SessionRejected' }));
+    native.client.auth.refreshSession.mockResolvedValue({ data: { session: { access_token: 'other', user: { id: 'other-user' } }, user: { id: 'other-user' } }, error: null });
+    await mount();
+    expect(auth).toMatchObject({ status: 'error', recovery: 'endSession', access: null });
+    expect(auth.error).toContain('sign-in could not be renewed');
+    expect(native.client.auth.refreshSession).toHaveBeenCalledOnce(); expect(native.access).not.toHaveBeenCalled();
+  });
+  it('blames the date and time when the renewed token is still rejected by the server', async () => {
+    const renewed: Session = { access_token: 'renewed', user: { id: guardian.userId } };
+    native.mfa.mockRejectedValue(Object.assign(new Error('Your security session changed.'), { name: 'SessionRejected' }));
+    native.client.auth.refreshSession.mockResolvedValue({ data: { session: renewed, user: renewed.user }, error: null });
+    await mount();
+    expect(auth).toMatchObject({ status: 'error', recovery: 'endSession' });
+    expect(auth.error).toContain('date and time');
+    expect(native.client.auth.refreshSession).toHaveBeenCalledOnce(); expect(native.mfa).toHaveBeenCalledTimes(2);
+  });
+  it('shows the connection message when renewing a rejected token fails for a network reason', async () => {
+    native.mfa.mockRejectedValue(Object.assign(new Error('Your security session changed.'), { name: 'SessionRejected' }));
+    native.client.auth.refreshSession.mockResolvedValue({ data: { session: null, user: null }, error: new AuthRetryableFetchError('Failed to fetch', 0) });
+    await mount();
+    expect(auth).toMatchObject({ status: 'error', recovery: 'endSession', error: 'Could not verify school access. Check your connection and try again.' });
+    expect(native.client.auth.refreshSession).toHaveBeenCalledOnce(); expect(native.mfa).toHaveBeenCalledOnce();
+  });
+  it('cold-starts a saved Student workspace with exactly one access read and no Guardian flash', async () => {
+    native.store.set(roleKey, JSON.stringify({ userId: guardian.userId, role: 'student' }));
+    await mount();
+    expect(auth).toMatchObject({ status: 'ready', role: 'student' });
+    expect(workspaces).not.toContain('ready:parent');
+    expect(native.client.auth.getSession).toHaveBeenCalledOnce(); expect(native.mfa).toHaveBeenCalledOnce();
+    expect(native.access).toHaveBeenCalledOnce(); expect(native.bound).toHaveBeenCalledOnce();
+  });
+  it('reads once when a Student-only account starts in the default Guardian role', async () => {
+    native.access.mockResolvedValue({ ...guardian, roles: ['student'] });
+    await mount();
+    expect(auth).toMatchObject({ status: 'ready', role: 'student' });
+    expect(native.access).toHaveBeenCalledOnce();
+  });
+  it('forgets the saved workspace on sign-out and on an Auth sign-out event', async () => {
+    await mount(); await act(async () => { await auth.chooseRole('student'); });
+    expect(native.store.has(roleKey)).toBe(true);
+    await act(async () => { await auth.signOut(); });
+    expect(auth.status).toBe('signedOut'); expect(native.store.has(roleKey)).toBe(false);
+    native.client.auth.signInWithPassword.mockImplementation(async () => {
+      native.client.auth.getSession.mockResolvedValue({ data: { session: sessionA }, error: null });
+      native.emitAuth('SIGNED_IN', sessionA); return { error: null };
+    });
+    await act(async () => { await auth.signIn('school@example.test', 'password'); });
+    expect(auth.status).toBe('ready'); expect(auth.role).toBe('parent');
+    await act(async () => { await auth.chooseRole('student'); });
+    expect(auth.role).toBe('student'); expect(native.store.has(roleKey)).toBe(true);
+    native.client.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    await act(async () => { native.emitAuth('SIGNED_OUT', null); });
+    expect(auth.status).toBe('signedOut'); expect(native.store.has(roleKey)).toBe(false);
+    await act(async () => { await auth.signIn('school@example.test', 'password'); });
+    expect(auth.status).toBe('ready'); expect(auth.role).toBe('parent');
   });
 });

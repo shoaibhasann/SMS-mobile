@@ -334,6 +334,59 @@ describe('Native push lifecycle', () => {
   });
 });
 
+describe('Push cleanup for unacknowledged and same-user registrations', () => {
+  const revokes = (f: ReturnType<typeof fixture>) => f.rpc.mock.calls.filter(call => call[0] === 'revoke_my_family_push_device');
+  it('passes the device-limit reason through and treats the unacknowledged binding as clean after FID deletion', async () => {
+    const f = fixture(), original = f.responder.getMockImplementation()!;
+    f.responder.mockImplementation(async (name, args) => name === 'register_my_family_push_device'
+      ? { data: null, error: { code: '22023', message: 'Remove an old device before adding another.' } as { code: string } } : original(name, args));
+    await expect(f.enableNativePush(f.args)).rejects.toMatchObject({ code: '22023', message: 'Remove an old device before adding another.' });
+    expect(JSON.parse(f.stored()!)).toMatchObject({ fid, deviceId: null });
+    expect(await f.disconnectNativePush(f.args)).toEqual({ serverRevoked: true, nativeCleared: true });
+    expect(revokes(f)).toHaveLength(0); expect(f.driver.disconnect).toHaveBeenCalledOnce(); expect(f.stored()).toBeNull();
+  });
+  it('treats a register RPC that failed after the FID was saved as clean once native cleanup succeeds', async () => {
+    const f = fixture(), original = f.responder.getMockImplementation()!;
+    f.responder.mockImplementation(async (name, args) => name === 'register_my_family_push_device' ? Promise.reject(new Error('network')) : original(name, args));
+    await expect(f.enableNativePush(f.args)).rejects.toBeTruthy();
+    expect(await f.disconnectNativePush(f.args)).toEqual({ serverRevoked: true, nativeCleared: true });
+  });
+  it('revokes a registration whose acknowledgement was lost by this phone’s own installation id', async () => {
+    const f = fixture(), original = f.responder.getMockImplementation()!;
+    f.responder.mockImplementation(async (name, args) => name === 'register_my_family_push_device' ? Promise.reject(new Error('network')) : original(name, args));
+    await expect(f.enableNativePush({ ...f.args, role: 'student' })).rejects.toBeTruthy();
+    expect(await f.disconnectNativePush(f.args)).toEqual({ serverRevoked: true, nativeCleared: true });
+    expect(f.rpc.mock.calls.filter(call => call[0] === 'revoke_my_family_push_installation'))
+      .toEqual([['revoke_my_family_push_installation', { p_role: 'student', p_installation_id: installationId }]]);
+    expect(revokes(f)).toHaveLength(0); expect(f.driver.disconnect).toHaveBeenCalledOnce();
+    const g = fixture(); g.driver.register.mockRejectedValueOnce(new Error('native failure'));
+    await expect(g.enableNativePush(g.args)).rejects.toMatchObject({ code: 'native' });
+    await g.disconnectNativePush(g.args);
+    expect(g.rpc.mock.calls.some(call => call[0] === 'revoke_my_family_push_installation')).toBe(false);
+  });
+  it('keeps the strict result when native cleanup of an unacknowledged binding fails', async () => {
+    const f = fixture(), original = f.responder.getMockImplementation()!;
+    f.responder.mockImplementation(async (name, args) => name === 'register_my_family_push_device' ? { data: {}, error: null }
+      : name === 'revoke_my_family_push_installation' ? { data: null, error: { code: 'PGRST000' } } : original(name, args));
+    await expect(f.enableNativePush(f.args)).rejects.toMatchObject({ code: 'response' });
+    f.driver.disconnect.mockRejectedValueOnce(new Error('native failure'));
+    expect(await f.disconnectNativePush(f.args)).toEqual({ serverRevoked: false, nativeCleared: false });
+    // Once the installation revoke is confirmed, the server side is clean even while native cleanup still fails.
+    f.responder.mockImplementation(original);
+    f.driver.disconnect.mockRejectedValueOnce(new Error('native failure'));
+    expect(await f.disconnectNativePush(f.args)).toEqual({ serverRevoked: true, nativeCleared: false });
+  });
+  it('revokes the same user’s other-role binding from the other workspace, never another user’s', async () => {
+    const f = fixture(); await f.enableNativePush({ ...f.args, role: 'student' });
+    expect(await f.disconnectNativePush({ ...f.args, role: 'parent' })).toEqual({ serverRevoked: true, nativeCleared: true });
+    expect(revokes(f)).toEqual([['revoke_my_family_push_device', { p_role: 'student', p_device_id: deviceId }]]);
+    const g = fixture(); await g.enableNativePush({ ...g.args, role: 'student' });
+    g.getUser.mockResolvedValue({ data: { user: { id: otherUser, is_anonymous: false } }, error: null });
+    expect(await g.disconnectNativePush({ ...g.args, userId: otherUser })).toEqual({ serverRevoked: false, nativeCleared: true });
+    expect(revokes(g)).toHaveLength(0);
+  });
+});
+
 const sdk = vi.hoisted(() => ({
   platform: { OS: 'android', Version: 35 }, permission: vi.fn(async () => 'granted'), hasPermission: vi.fn(async () => 0),
   readPrompt: vi.fn(async (): Promise<string | null> => null), writePrompt: vi.fn(async () => {}),
@@ -403,5 +456,121 @@ describe('Android FID adapter', () => {
     await expect(driver.disconnect()).rejects.toMatchObject({ code: 'native' });
     expect(sdk.setAutoInitEnabled).toHaveBeenCalledWith(expect.anything(), false);
     expect(sdk.deleteInstallations).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Native push registration refresh', () => {
+  const registerCalls = (f: ReturnType<typeof fixture>) => f.rpc.mock.calls.filter(([name]) => name === 'register_my_family_push_device');
+  async function registered() {
+    const f = fixture(); f.driver.readPermission.mockResolvedValue('granted');
+    await f.enableNativePush(f.args); f.rpc.mockClear(); f.driver.register.mockClear();
+    return f;
+  }
+  it('re-registers the saved installation so only last_seen_at moves, without prompting or rotating the FID', async () => {
+    const f = await registered();
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toEqual([['register_my_family_push_device', { p_role: 'parent', p_installation_id: installationId,
+      p_installation_secret: secret, p_fid: fid, p_platform: 'android', p_label: 'School phone' }]]);
+    expect(f.driver.register).not.toHaveBeenCalled(); expect(f.driver.requestPermission).not.toHaveBeenCalled();
+    expect(JSON.parse(f.stored()!)).toMatchObject({ state: 'registered', deviceId, generation: 1, fid });
+  });
+  it('throttles repeat refreshes for the same owner', async () => {
+    const f = await registered();
+    await f.refreshNativePushRegistration(f.args); await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(1);
+  });
+  it('does nothing without a registered binding for this owner, without permission, or after an FID rotation', async () => {
+    const empty = fixture();
+    await empty.refreshNativePushRegistration(empty.args);
+    expect(empty.deps.driver).not.toHaveBeenCalled(); expect(empty.rpc).not.toHaveBeenCalled();
+    const f = await registered();
+    await f.refreshNativePushRegistration({ ...f.args, userId: otherUser });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    f.driver.readPermission.mockResolvedValue('settings');
+    await f.refreshNativePushRegistration(f.args);
+    vi.advanceTimersByTime(10 * 60_000);
+    f.driver.readPermission.mockResolvedValue('granted'); f.driver.currentInstallationId.mockResolvedValue('r'.repeat(22));
+    await f.refreshNativePushRegistration(f.args);
+    expect(f.driver.currentInstallationId).toHaveBeenCalled();
+    expect(registerCalls(f)).toHaveLength(0);
+  });
+  it.each([
+    ['no saved binding', async (f: ReturnType<typeof fixture>) => { f.setStored(null); }],
+    ['a pending binding', async (f: ReturnType<typeof fixture>) => { f.setStored(JSON.stringify({ ...JSON.parse(f.stored()!), state: 'pending' })); }],
+    ['a rotated installation id', async (f: ReturnType<typeof fixture>) => { f.driver.currentInstallationId.mockResolvedValue('r'.repeat(22)); }],
+    ['a failed registration', async (f: ReturnType<typeof fixture>) => { f.responder.mockResolvedValue({ data: null, error: { code: '08006' } }); }],
+  ])('retries %s at most once every 10 minutes instead of on every token tick', async (_, arrange) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const f = await registered(); await arrange(f);
+    const reads = () => vi.mocked(f.deps.storage.read).mock.calls.length;
+    await f.refreshNativePushRegistration(f.args);
+    const afterFirst = reads(), driverCalls = vi.mocked(f.deps.driver).mock.calls.length;
+    for (let tick = 0; tick < 19; tick += 1) { vi.advanceTimersByTime(30_000); await f.refreshNativePushRegistration(f.args); }
+    expect(reads()).toBe(afterFirst); expect(vi.mocked(f.deps.driver).mock.calls.length).toBe(driverCalls);
+    vi.advanceTimersByTime(30_000);
+    await f.refreshNativePushRegistration(f.args);
+    expect(reads()).toBe(afterFirst + 1);
+  });
+  it.each([
+    ['notification permission that is re-granted in Android settings', (f: ReturnType<typeof fixture>) => {
+      f.driver.readPermission.mockResolvedValueOnce('settings'); }],
+    ['a sign-in check that is not ready yet', (f: ReturnType<typeof fixture>) => {
+      f.getUser.mockResolvedValueOnce({ data: { user: null }, error: new Error('not ready') } as never); }],
+    ['a failed explicit enable that cancels the refresh mid-way', (f: ReturnType<typeof fixture>) => {
+      f.getUser.mockImplementationOnce(async () => {
+        f.responder.mockResolvedValueOnce({ data: null, error: { code: '08006' } });
+        await expect(f.enableNativePush(f.args)).rejects.toThrow();
+        return { data: { user: { id: userId, is_anonymous: false } }, error: null };
+      }); }],
+  ])('retries straight away after %s, because the refresh never reached the server', async (_, arrange) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const f = await registered(); arrange(f);
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(0);
+    vi.advanceTimersByTime(30_000);
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(1);
+  });
+  it('sends one registration when start-up and a token refresh overlap', async () => {
+    const f = await registered();
+    await Promise.all([f.refreshNativePushRegistration(f.args), f.refreshNativePushRegistration(f.args)]);
+    expect(registerCalls(f)).toHaveLength(1);
+  });
+  it('refreshes immediately after an explicit enable even when an earlier attempt was throttled', async () => {
+    const f = fixture(); f.driver.readPermission.mockResolvedValue('granted');
+    await f.refreshNativePushRegistration(f.args);
+    await f.enableNativePush(f.args); f.rpc.mockClear();
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(1);
+  });
+  it('marks a remotely revoked phone for cleanup and never reactivates it', async () => {
+    const f = await registered();
+    f.responder.mockResolvedValueOnce({ data: null, error: { code: '42501' } });
+    await expect(f.refreshNativePushRegistration(f.args)).resolves.toBeUndefined();
+    expect(JSON.parse(f.stored()!)).toMatchObject({ state: 'cleanup-required' });
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(1);
+  });
+  it('swallows other failures and retries on the next start', async () => {
+    const f = await registered();
+    f.responder.mockResolvedValueOnce({ data: null, error: { code: '08006' } });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    await expect(f.refreshNativePushRegistration(f.args)).resolves.toBeUndefined();
+    expect(JSON.parse(f.stored()!)).toMatchObject({ state: 'registered' });
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(1);
+    vi.advanceTimersByTime(10 * 60_000);
+    await f.refreshNativePushRegistration(f.args);
+    expect(registerCalls(f)).toHaveLength(2);
+  });
+  it('does not write a refresh result after the account changes mid-request', async () => {
+    const f = await registered(), reply = deferred<{ data: unknown; error: null }>();
+    f.responder.mockReturnValueOnce(reply.promise);
+    const refreshing = f.refreshNativePushRegistration(f.args);
+    await vi.waitFor(() => expect(registerCalls(f)).toHaveLength(1));
+    const cleanup = f.disconnectNativePush(f.args);
+    reply.resolve({ data: { device_id: deviceId, generation: 2 }, error: null });
+    await refreshing; await cleanup;
+    expect(f.stored()).toBeNull();
   });
 });

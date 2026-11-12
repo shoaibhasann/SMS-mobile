@@ -2,9 +2,8 @@ import { useCallback } from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../auth/provider';
-import { summarizePublishedResults } from '../../data/academic-analysis';
+import { loadAllPublishedResults, summarizePublishedResults } from '../../data/academic-analysis';
 import { listHomework } from '../../data/homework';
-import { getFamilyAssessmentResults } from '../../data/results';
 import { ChildPicker, useFamily } from '../../ui/family';
 import { BackArrow, Button, Card, ErrorCard, Screen, Skeleton, Text, Title } from '../../ui/primitives';
 import { usePalette } from '../../ui/theme';
@@ -18,10 +17,10 @@ export default function AcademicAnalysis() {
   const read = useCallback(async (signal: AbortSignal) => {
     if (!access || !client || !pupil) return null;
     const [results, homework] = await Promise.all([
-      getFamilyAssessmentResults(client, access, role, pupil, 0, signal),
+      loadAllPublishedResults(client, access, role, pupil, signal),
       listHomework(client, access, role, pupil, 0, signal),
     ]);
-    return { results, homeworkCount: homework.total, summary: summarizePublishedResults(results.rows) };
+    return { results, homeworkCount: homework.total, homeworkPlaced: homework.placed, summary: summarizePublishedResults(results.rows) };
   }, [access, client, role, pupil]);
   const analysis = useLoad(`${access?.userId}:${access?.schoolId}:${role}:${pupil?.id}`, read);
   return <Screen>
@@ -30,10 +29,11 @@ export default function AcademicAnalysis() {
     {pupil && <ChildPicker />}
     {family.loading ? <Skeleton /> : family.error ? <ErrorCard message={family.error} retry={family.refresh} />
       : !pupil ? <Card><Text>No student profile is currently linked.</Text></Card>
-      : analysis.loading ? <Skeleton /> : analysis.error ? <ErrorCard message={analysis.error} retry={analysis.reload} /> : analysis.data && <>
+      : analysis.loading ? <Skeleton /> : analysis.error ? <ErrorCard message={analysis.error} retry={family.refresh} /> : analysis.data && <>
         <Card style={{ backgroundColor: p.soft }}>
           <Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 18 }}>Current session homework</Text>
-          <Text><Text style={{ color: p.primary, fontWeight: '700' }}>{analysis.data.homeworkCount}</Text> published {analysis.data.homeworkCount === 1 ? 'task' : 'tasks'} for this student’s current placement.</Text>
+          {analysis.data.homeworkPlaced ? <Text><Text style={{ color: p.primary, fontWeight: '700' }}>{analysis.data.homeworkCount}</Text> published {analysis.data.homeworkCount === 1 ? 'task' : 'tasks'} for this student’s current placement.</Text>
+            : <Text>No current class placement this session. Contact your school if you expected homework here.</Text>}
           <Text style={{ color: p.muted }}>Open Learning for due dates and teacher feedback.</Text>
         </Card>
         {analysis.data.summary ? <>

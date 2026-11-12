@@ -25,6 +25,7 @@ export function homeworkCancelled(signal?: AbortSignal) { if (signal?.aborted) {
 export function homeworkError(cause: unknown) {
   const code = (cause as { code?: string } | null)?.code;
   if (code === '42501') return 'Your access changed. Refresh school access before continuing.';
+  if ((cause as Error | null)?.name === 'AbortError') return 'The school did not respond in time. Retry; your work is kept.';
   if (code === 'PT409' || code === '40001') return 'This work changed in another session. Your draft is kept; reload the saved submission before editing.';
   if (code === '23505') return 'This request was already used for different work. Reload its saved status.';
   if (code === '22023' || code === '23514') return 'Check your response and attachment, then try again.';
@@ -82,8 +83,8 @@ function scopedActivities(client: SupabaseClient, access: FamilyAccess, scope: P
 export async function listHomework(client: SupabaseClient, access: FamilyAccess, role: FamilyRole, child: FamilyChild, offset = 0, signal?: AbortSignal) {
   if (!Number.isSafeInteger(offset) || offset < 0 || offset % homeworkPageSize !== 0) throw invalid();
   const scope = await placement(client, access, role, child, signal);
-  if (!scope) return { rows: [] as HomeworkActivity[], total: 0, offset };
-  const query = scopedActivities(client, access, scope).order('due_date', { ascending: true, nullsFirst: false }).order('id').range(offset, offset + homeworkPageSize - 1);
+  if (!scope) return { rows: [] as HomeworkActivity[], total: 0, offset, placed: false };
+  const query = scopedActivities(client, access, scope).order('due_date', { ascending: false, nullsFirst: true }).order('created_at', { ascending: false }).order('id').range(offset, offset + homeworkPageSize - 1);
   const result = await (signal ? query.abortSignal(signal) : query);
   homeworkCancelled(signal);
   if (result.error) throw result.error;
@@ -91,7 +92,7 @@ export async function listHomework(client: SupabaseClient, access: FamilyAccess,
     || result.data.length > 0 && result.count < offset + result.data.length) throw invalid();
   const rows = result.data.map(row => activity(row, access.schoolId, scope));
   if (new Set(rows.map(row => row.id)).size !== rows.length) throw invalid();
-  return { rows, total: result.count, offset };
+  return { rows, total: result.count, offset, placed: true };
 }
 
 export async function listHomeworkStatuses(client: SupabaseClient, role: FamilyRole, child: FamilyChild, rows: HomeworkActivity[], signal?: AbortSignal) {
@@ -125,6 +126,20 @@ export async function getHomework(client: SupabaseClient, access: FamilyAccess, 
   const row = activity(result.data, access.schoolId, scope);
   if (row.id !== id) throw invalid();
   return row;
+}
+// Homework inbox rows carry no student_id, so find the linked child whose current placement contains this activity.
+export async function resolveHomeworkChild(client: SupabaseClient, access: FamilyAccess, role: FamilyRole, children: readonly FamilyChild[], id: string, signal?: AbortSignal): Promise<FamilyChild> {
+  if (!homeworkUuid(id)) throw invalid();
+  for (const child of children) {
+    const scope = await placement(client, access, role, child, signal);
+    if (!scope) continue;
+    const query = scopedActivities(client, access, scope).eq('id', id);
+    const result = await (signal ? query.abortSignal(signal) : query).maybeSingle();
+    homeworkCancelled(signal);
+    if (result.error) throw result.error;
+    if (result.data !== null) return child;
+  }
+  throw new HomeworkError('This homework is not available for your linked children. Refresh updates or contact your school.', 'unavailable');
 }
 function submission(value: unknown, work: HomeworkActivity, child: FamilyChild): HomeworkSubmission {
   const row = record(value);

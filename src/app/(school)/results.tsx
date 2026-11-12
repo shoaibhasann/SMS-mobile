@@ -38,7 +38,7 @@ function ResultsAccess({ childId, assessmentId, invalid }: { childId?: string; a
   </Screen>;
 }
 function ResultHistory({ pupil, assessmentId }: { pupil: FamilyChild; assessmentId?: string }) {
-  const { access, role, client } = useAuth(), p = usePalette();
+  const { access, role, client } = useAuth(), p = usePalette(), family = useFamily();
   const [offset, setOffset] = useState(0);
   const read = useCallback(async (signal: AbortSignal): Promise<FamilyResultPage> => {
     if (!access || !client) throw new Error('A verified family session is required.');
@@ -52,7 +52,7 @@ function ResultHistory({ pupil, assessmentId }: { pupil: FamilyChild; assessment
   return <>
     <View style={{ gap: 5 }}><Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 18 }}>{assessmentId === undefined ? 'Published result history' : 'Result from notification'}</Text>
       <Text style={{ color: p.muted, fontSize: 12 }}>Only the latest published revision for each assessment is shown.</Text></View>
-    {history.loading ? <Skeleton /> : history.error ? <ErrorCard message={history.error} retry={history.reload} />
+    {history.loading ? <Skeleton /> : history.error ? <ErrorCard message={history.error} retry={family.refresh} />
       : !history.data?.rows.length ? <Card><Text>{assessmentId === undefined ? 'No school-published results on this page. Results appear after school review.' : 'This published result is no longer available. Open all published results to see the current history.'}</Text></Card>
         : history.data.rows.map(result => <ResultCard key={result.id} result={result} />)}
     {assessmentId === undefined && history.data && !history.loading && <>
@@ -60,7 +60,7 @@ function ResultHistory({ pupil, assessmentId }: { pupil: FamilyChild; assessment
       <View style={{ flexDirection: 'row', gap: 10 }}><View style={{ flex: 1 }}><Button label="Previous results" secondary disabled={offset === 0} onPress={() => setOffset(value => Math.max(0, value - publicationPageSize))} /></View>
         <View style={{ flex: 1 }}><Button label="Next results" secondary disabled={offset + publicationPageSize >= history.data.total_count} onPress={() => setOffset(value => value + publicationPageSize)} /></View></View>
     </>}
-    <Button label="Refresh published results" secondary disabled={history.loading} onPress={history.reload} />
+    <Button label="Refresh published results" secondary disabled={history.loading} onPress={history.error ? family.refresh : history.reload} />
     <Text style={{ color: p.muted, fontSize: 12 }}>These are single-assessment results. Term grades, pass/fail and class rank are not included.</Text>
   </>;
 }

@@ -57,6 +57,7 @@ export function createPushLifecycle(deps: PushDependencies) {
   let epoch = 0, cleanupBlocked = false, detach = () => {};
   const inboxListeners = new Set<PushOwner & { reload(): void }>();
   const registrationListeners = new Set<PushOwner & { changed(): void }>();
+  const refreshAfter = new Map<string, number>(), refreshing = new Set<string>();
   const stopHints = () => { detach(); detach = () => {}; };
   const read = async () => decode(await deps.storage.read());
   const write = (binding: Binding) => deps.storage.write(JSON.stringify(binding));
@@ -65,6 +66,8 @@ export function createPushLifecycle(deps: PushDependencies) {
     const controller = new AbortController();
     try {
       const response = await limited(client.rpc(name, args).abortSignal(controller.signal), 8_000);
+      // 22023 texts (device limit, registration rate limit, invalid details) are written for families.
+      if (response.error?.code === '22023' && response.error.message) throw new NativePushError(response.error.message, '22023');
       if (response.error) throw new NativePushError(response.error.code === '42501'
         ? 'Phone access could not be verified. Disconnect before enabling again.' : response.error.code === 'PT409'
           ? 'Notification preferences changed. Refresh settings before trying again.' : 'The phone update could not be confirmed. Retry or disconnect before sharing this phone.', response.error.code);
@@ -175,9 +178,50 @@ export function createPushLifecycle(deps: PushDependencies) {
     finally {
       if (running === task) {
         running = null;
+        if (registrationSaved) refreshAfter.delete(`${args.userId}:${args.role}`); // An explicit enable lifts any earlier refresh throttle.
         if (registrationSaved && expected === epoch) for (const listener of registrationListeners) if (sameOwner(args, listener)) listener.changed();
       }
     }
+  }
+  // Delivery skips devices unseen for 90 days, so an enabled phone re-registers its saved installation on app start and token refresh.
+  async function refreshNativePushRegistration(args: PushArguments & { configured: boolean; label: string }) {
+    try {
+      if (!getPushAvailability(args.configured).available || running || nativePending || cleanupBlocked) return;
+      owner(args);
+      const key = `${args.userId}:${args.role}`;
+      if ((refreshAfter.get(key) ?? 0) > Date.now() || refreshing.has(key)) return;
+      refreshing.add(key);
+      // Token refreshes can tick every 30 s under clock skew: a settled ineligible or failed refresh retries after 10 minutes, a successful one after 6 hours.
+      // Cancelled refreshes, pre-server failures and a missing permission (changeable in Android settings) retry on the next start or token refresh.
+      const settle = (milliseconds: number) => { refreshAfter.set(key, Date.now() + milliseconds); };
+      try {
+        const expected = epoch, binding = await read(); current(expected);
+        // Only an explicit enable changes the binding or FID, and it lifts this throttle.
+        if (!binding || !sameOwner(binding, args) || binding.state !== 'registered') { settle(10 * 60_000); return; }
+        const driver = await limited(deps.driver()); current(expected);
+        if (await limited(driver.readPermission()) !== 'granted') return;
+        current(expected);
+        if (await nativeCall(driver.currentInstallationId()) !== binding.fid) { settle(10 * 60_000); return; }
+        current(expected);
+        await assertOwner(args); current(expected);
+        let result: unknown;
+        try {
+          result = await rpc(args.client, 'register_my_family_push_device', { p_role: args.role, p_installation_id: binding.installationId,
+            p_installation_secret: binding.secret, p_fid: binding.fid, p_platform: 'android', p_label: args.label.trim() });
+        } catch (error) {
+          settle(10 * 60_000);
+          // A revoked row is never reactivated by the server; mark it so the Account screen asks for cleanup.
+          if (error instanceof NativePushError && error.code === '42501' && expected === epoch) { binding.state = 'cleanup-required'; await write(binding); }
+          return;
+        }
+        settle(10 * 60_000);
+        current(expected);
+        const saved = record(result);
+        if (saved.device_id !== binding.deviceId || !Number.isSafeInteger(saved.generation) || Number(saved.generation) < 1) return;
+        if (Number(saved.generation) !== binding.generation) { binding.generation = Number(saved.generation); await write(binding); }
+        settle(6 * 3_600_000);
+      } finally { refreshing.delete(key); }
+    } catch { /* A background refresh never surfaces errors; the next start or token refresh retries. */ }
   }
   async function disconnect(args: PushArguments | null) {
     ++epoch; stopHints(); const previous = running;
@@ -188,17 +232,28 @@ export function createPushLifecycle(deps: PushDependencies) {
       if (!binding && !storageInvalid && !nativePending && !cleanupBlocked) return { serverRevoked: true, nativeCleared: true };
       cleanupBlocked = true;
       if (binding) { binding.state = 'cleanup-required'; await write(binding).catch(() => {}); }
+      // The signed-in user may clean up their own binding from either family workspace; the server rechecks p_role.
+      const mine = binding && args && binding.userId === args.userId ? binding : null;
       // Without a saved FID no registration RPC has been sent for this binding.
-      let serverRevoked = !!binding && !!args && sameOwner(binding, args) && !binding.fid && !binding.deviceId;
-      if (binding && args && sameOwner(binding, args) && binding.deviceId) {
-        try { await assertOwner(args); serverRevoked = await rpc(args.client, 'revoke_my_family_push_device', { p_role: binding.role, p_device_id: binding.deviceId }) === true; } catch { /* Native cleanup still runs after sign-in expires. */ }
+      let serverRevoked = !!mine && !mine.fid && !mine.deviceId;
+      if (mine && args && mine.deviceId) {
+        try { await assertOwner(args); serverRevoked = await rpc(args.client, 'revoke_my_family_push_device', { p_role: mine.role, p_device_id: mine.deviceId }) === true; } catch { /* Native cleanup still runs after sign-in expires. */ }
+      } else if (mine && args && mine.fid) {
+        // The register reply was lost: a committed row would hold a device slot, so revoke it by this phone's own installation id.
+        try {
+          await assertOwner(args);
+          await rpc(args.client, 'revoke_my_family_push_installation', { p_role: mine.role, p_installation_id: mine.installationId });
+          serverRevoked = true;
+        } catch { /* The dispatcher still retires the row once FCM reports UNREGISTERED. */ }
       }
       try {
         if (nativePending) await limited(nativePending);
         const driver = await deps.driver();
         await nativeCall(driver.disconnect());
         await deps.storage.clear(); cleanupBlocked = false;
-        return { serverRevoked, nativeCleared: true };
+        // An unacknowledged registration (FID sent, no device id) is undeliverable once the FID is deleted;
+        // the dispatcher retires any orphan row when FCM reports UNREGISTERED.
+        return { serverRevoked: serverRevoked || (!!mine && !mine.deviceId), nativeCleared: true };
       } catch { return { serverRevoked, nativeCleared: false }; }
     })();
     running = task;
@@ -242,5 +297,5 @@ export function createPushLifecycle(deps: PushDependencies) {
     stopHints(); detach = stop;
     return () => { stop(); if (detach === stop) detach = () => {}; };
   }
-  return { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints, subscribePushInboxRefresh, subscribePushRegistration };
+  return { getPushAvailability, readNativePushPermission, readPushEnrollment, enableNativePush, refreshNativePushRegistration, disconnectNativePush, cleanupSavedPushOnAuthLoss, attachPushInboxHints, subscribePushInboxRefresh, subscribePushRegistration };
 }

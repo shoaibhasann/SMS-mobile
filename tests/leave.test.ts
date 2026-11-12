@@ -136,6 +136,12 @@ describe('family leave data', () => {
     await expect(submitStudentLeave(f.client, access, 'parent', child, request)).rejects.toThrow('could not be confirmed');
     await expect(listFamilyStudentLeave(f.client, access, 'parent', child, -1)).rejects.toThrow('valid history page');
   });
+  it('reports a missing class placement as an office problem, not an access failure', async () => {
+    const f = fixture(); f.replies.submit_student_leave = { data: null, error: { code: 'PT422', message: 'private SQL detail' } };
+    await expect(submitStudentLeave(f.client, access, 'parent', child, request)).rejects.toMatchObject({
+      code: 'PT422', message: 'This student has no active class placement for the current school year. Contact the school office.',
+    });
+  });
 });
 
 describe('encrypted unknown-outcome leave intent storage', () => {

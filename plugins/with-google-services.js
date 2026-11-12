@@ -8,7 +8,7 @@ module.exports = function withGoogleServices(config) {
   });
   config = withAndroidColors(config, result => {
     const colors = result.modResults.resources.color ?? [];
-    result.modResults.resources.color = [...colors.filter(color => color.$.name !== 'notification_icon_color'), { $: { name: 'notification_icon_color' }, _: '#3867ff' }];
+    result.modResults.resources.color = [...colors.filter(color => color.$.name !== 'notification_icon_color'), { $: { name: 'notification_icon_color' }, _: '#0c69e2' }];
     return result;
   });
   return withDangerousMod(config, ['android', async result => {

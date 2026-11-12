@@ -64,6 +64,9 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
   const loadDecision = useCallback((signal: AbortSignal) => requestId ? getFamilyNotificationLeave(client, access, role, child, requestId, signal) : Promise.resolve(null), [client, access, role, child, requestId]);
   const decision = useLoad(`${access.userId}:${role}:${child.id}:decision:${requestId}`, loadDecision);
   const locked = busy || !!pending || pendingLoading || !!pendingError;
+  const unsent = !pending && Object.values(draft).some(value => value.trim());
+  // After a failed read re-check the linked children (a revoked link), unless that remount would drop an unsent draft or a live submit.
+  const recheck = (local: () => void) => busy || unsent ? local() : family.refresh();
   function select(value: FamilyChild) {
     if (value.id === child.id || submitting.current || pending) return;
     const change = () => { if (!current() || submitting.current || pending) return; family.select(value.id); router.setParams({ child: value.id, request: undefined }); };
@@ -86,8 +89,9 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
       if (!current()) return;
       setPending(null); setDraft(empty); setOffset(0); setNotice('Request sent. You can track it under Request history.'); setExpanded(saved); history.reload();
     } catch (cause) {
-      // Only the first explicitly rejected attempt can unlock editing. An earlier unknown commit stays locked.
-      if (prepared && !prepared.recovered && cause instanceof StudentLeaveError && ['22023', 'PT409', '42501', '23505', '40001'].includes(cause.code) && !controller.signal.aborted) {
+      // A first attempt unlocks on any explicit rejection. A retry of an unconfirmed request unlocks only on codes
+      // submit_student_leave raises after its idempotency-key lookup, which prove the earlier attempt never committed.
+      if (prepared && cause instanceof StudentLeaveError && (prepared.recovered ? ['22023', 'PT409'] : ['22023', 'PT409', 'PT422', '42501', '23505', '40001']).includes(cause.code) && !controller.signal.aborted) {
         await pendingStore.complete(scope, prepared.intent.idempotencyKey).catch(() => {});
       }
       if (!current()) return;
@@ -102,10 +106,10 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
   return <>
     <ChildPicker child={child} onSelect={select} disabled={locked} />
     {role === 'parent' && family.children.length > 1 && (busy || pending) && <Text style={{ color: p.muted }}>Student selection is locked until this request is confirmed. An unconfirmed request is kept securely for this account and student.</Text>}
-    {requestId && (decision.loading ? <Skeleton rows={1} /> : decision.error ? <ErrorCard message={decision.error} retry={decision.reload} /> : decision.data ? <LeaveRecord row={decision.data} expanded /> : <Card><Text>This leave decision is currently unavailable. Refresh school access or contact your school.</Text></Card>)}
+    {requestId && (decision.loading ? <Skeleton rows={1} /> : decision.error ? <ErrorCard message={decision.error} retry={() => recheck(decision.reload)} /> : decision.data ? <LeaveRecord row={decision.data} expanded /> : <Card><Text>This leave decision is currently unavailable. Refresh school access or contact your school.</Text></Card>)}
     <Card><Text accessibilityRole="header" style={{ fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{pending ? 'Confirm your submitted request' : 'Request leave'}</Text>
-      <Text style={{ color: p.muted }}>Your principal or school administrator approves or declines the request. Attendance is recorded separately.</Text>
-      {pendingLoading ? <Skeleton rows={1} /> : pendingError ? <ErrorCard message={pendingError} retry={() => { setPendingLoading(true); void restore().catch(() => {}).finally(() => setPendingLoading(false)); }} /> : <>
+      <Text style={{ color: p.muted }}>Your principal or school administrator approves or rejects the request. Attendance is recorded separately.</Text>
+      {pendingLoading ? <Skeleton rows={1} /> : pendingError ? <ErrorCard inline message={pendingError} retry={() => { setPendingLoading(true); void restore().catch(() => {}).finally(() => setPendingLoading(false)); }} /> : <>
         {pending && <Text style={{ color: p.warning }}>The previous outcome is unconfirmed. Dates and reason are locked. Retry this same request to check whether your school received it.</Text>}
         {child.status !== 'active' && !pending && <Text style={{ color: p.muted }}>Retained history is available. Only an active student with a current enrollment can submit a new request.</Text>}
         <Text style={{ color: p.muted }}>All fields are required. Choose dates in the current academic year.</Text>
@@ -123,11 +127,12 @@ function LeaveForChild({ access, client, role, child, requestId }: { access: Fam
         </View>
         <Button label={busy ? 'Confirming request…' : pending ? 'Retry this same request' : 'Submit leave request'} disabled={busy || (!pending && child.status !== 'active')} onPress={() => void submit()} />
       </>}
-      {notice && <Text accessibilityLiveRegion="polite" style={{ color: p.success }}>{notice}</Text>}{error && <ErrorCard message={error} />}
+      {notice && <Text accessibilityLiveRegion="polite" style={{ color: p.success }}>{notice}</Text>}{error && <ErrorCard inline message={error} />}
     </Card>
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}><Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 18 }}>Request history</Text><Button label="Refresh history" secondary disabled={busy} onPress={history.reload} /></View>
-    {history.loading ? <Skeleton /> : history.error ? <ErrorCard message={history.error} retry={history.reload} /> : !history.data?.length ? <Card><Text>{offset === 0 ? 'No leave requests yet.' : 'No leave requests on this page.'}</Text></Card> : history.data.map(row => <View key={row.id} style={{ gap: 8 }}><LeaveRecord row={row} expanded={row.id === expanded} /><Pressable accessibilityRole="button" accessibilityLabel={row.id === expanded ? 'Hide leave details' : 'Show leave details'} onPress={() => setExpanded(value => value === row.id ? '' : row.id)} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 10 }}><Text style={{ color: p.primary, fontWeight: '600' }}>{row.id === expanded ? 'Hide details' : 'View details'}</Text></Pressable></View>)}
-    <View style={{ gap: 10 }}><Text style={{ color: p.muted }}>Page {Math.floor(offset / 50) + 1}{history.data?.[0] ? ` · ${history.data[0].total_count} saved requests` : ''}</Text><View style={{ flexDirection: 'row', gap: 10 }}><View style={{ flex: 1 }}><Button label="Previous" secondary disabled={busy || history.loading || offset === 0} onPress={() => setOffset(value => Math.max(0, value - 50))} /></View><View style={{ flex: 1 }}><Button label="Next" secondary disabled={busy || history.loading || !history.data?.length || offset + 50 >= history.data[0].total_count} onPress={() => setOffset(value => value + 50)} /></View></View></View>
+    <Text accessibilityRole="header" style={{ fontWeight: '700', fontSize: 18 }}>Request history</Text>
+    {history.loading ? <Skeleton /> : history.error ? <ErrorCard message={history.error} retry={() => recheck(history.reload)} /> : !history.data?.length ? <Card><Text>{offset === 0 ? 'No leave requests yet.' : 'No leave requests on this page.'}</Text></Card> : history.data.map(row => <View key={row.id} style={{ gap: 8 }}><LeaveRecord row={row} expanded={row.id === expanded} /><Pressable accessibilityRole="button" accessibilityLabel={row.id === expanded ? 'Hide leave details' : 'Show leave details'} onPress={() => setExpanded(value => value === row.id ? '' : row.id)} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 10 }}><Text style={{ color: p.primary, fontWeight: '600' }}>{row.id === expanded ? 'Hide details' : 'View details'}</Text></Pressable></View>)}
+    <View style={{ gap: 10 }}><Text style={{ color: p.muted }}>{history.data?.[0] ? `${offset + 1}–${offset + history.data.length} of ${history.data[0].total_count} requests` : `Page ${Math.floor(offset / 50) + 1}`}</Text><View style={{ flexDirection: 'row', gap: 10 }}><View style={{ flex: 1 }}><Button label="Previous" secondary disabled={busy || history.loading || offset === 0} onPress={() => setOffset(value => Math.max(0, value - 50))} /></View><View style={{ flex: 1 }}><Button label="Next" secondary disabled={busy || history.loading || !history.data?.length || offset + 50 >= history.data[0].total_count} onPress={() => setOffset(value => value + 50)} /></View></View></View>
+    <Button label="Refresh history" secondary disabled={busy} onPress={() => history.error ? recheck(history.reload) : history.reload()} />
   </>;
 }
 
@@ -135,6 +140,6 @@ function LeaveRecord({ row, expanded }: { row: StudentLeaveRequest; expanded: bo
   const p = usePalette();
   return <Card><View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10 }}><Text style={{ fontWeight: '700' }}>{dateLabel(row.start_date)} – {dateLabel(row.end_date)}</Text><Text style={{ color: row.status === 'approved' ? p.success : row.status === 'rejected' ? p.danger : p.warning, fontWeight: '600' }}>{row.status === 'approved' ? 'Approved' : row.status === 'rejected' ? 'Rejected' : 'Pending review'}</Text></View>
     <Text numberOfLines={expanded ? undefined : 3}>{row.reason}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.academic_year_name} · {row.class_name}{row.section_name ? ` ${row.section_name}` : ''}</Text>
-    {expanded && <><Text style={{ color: p.muted, fontSize: 12 }}>Requested by {row.requester_name || 'School account'} · {new Date(row.created_at).toLocaleDateString('en-IN')}</Text>{row.review_note && <View style={{ gap: 6, borderTopWidth: 1, borderTopColor: p.border, paddingTop: 12 }}><Text style={{ fontWeight: '600' }}>School decision</Text><Text>{row.review_note}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.reviewer_name || 'School reviewer'} · {new Date(row.reviewed_at!).toLocaleDateString('en-IN')}</Text></View>}</>}
+    {expanded && <><Text style={{ color: p.muted, fontSize: 12 }}>Requested by {row.requester_name || 'School account'} · {new Date(row.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}</Text>{row.review_note && <View style={{ gap: 6, borderTopWidth: 1, borderTopColor: p.border, paddingTop: 12 }}><Text style={{ fontWeight: '600' }}>School decision</Text><Text>{row.review_note}</Text><Text style={{ color: p.muted, fontSize: 12 }}>{row.reviewer_name || 'School reviewer'} · {new Date(row.reviewed_at!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}</Text></View>}</>}
   </Card>;
 }

@@ -14,7 +14,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...config, name: 'SMS', slug: 'sms-mobile',
     android: { ...config.android, ...(firebaseConfigured ? { googleServicesFile: androidFile } : {}) },
-    plugins: [...(config.plugins ?? []), ...(firebaseConfigured ? ['@react-native-firebase/app', ['@react-native-firebase/messaging', { installationIdEnabled: true, android: { notificationIcon: './assets/notification-icon.png', notificationColor: '#3867ff' } }] as [string, Record<string, unknown>], './plugins/with-google-services.js'] : [])],
+    plugins: [...(config.plugins ?? []), ...(firebaseConfigured ? ['@react-native-firebase/app', ['@react-native-firebase/messaging', { installationIdEnabled: true, android: { notificationIcon: './assets/notification-icon.png', notificationColor: '#0c69e2' } }] as [string, Record<string, unknown>], './plugins/with-google-services.js'] : [])],
     extra: { ...config.extra, firebaseConfigured },
   };
 };
