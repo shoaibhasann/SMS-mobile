@@ -39,7 +39,8 @@
       "expo-secure-store",
       "expo-font",
       "./plugins/with-reminder-channel.js",
-      "./plugins/with-splash-background.js"
+      "./plugins/with-splash-background.js",
+      "./plugins/with-release-signing.js"
     ],
     "scheme": "sms-school"
   }
