@@ -32,6 +32,48 @@ The app package ID is `tech.iamshoaib.sms`. Firebase client configuration is rea
 
 `npm run android` generates the Android project and installs a development build. `npm start -- --port 8087` starts Metro separately. Firebase native modules require a development build; Expo Go is not the push test environment. Generated `android/` and `ios/` files are not edited or committed; config plugins own them. Android Google Services Gradle plugin is pinned to **4.5.0** through the local config plugin.
 
+## Android release signing
+
+Play accepts only a release bundle signed with the owner's upload key. `plugins/with-release-signing.js` makes `release` builds (AAB and APK) use that key when these Gradle properties are set. They normally go in `~/.gradle/gradle.properties`, never in this repository or the generated `android/`. Keep that file `chmod 600`, and never paste `./gradlew properties` output.
+
+```properties
+SMS_UPLOAD_STORE_FILE=/Users/<you>/.sms-signing/sms-upload.jks
+SMS_UPLOAD_KEY_ALIAS=sms-upload
+SMS_UPLOAD_STORE_PASSWORD=…
+SMS_UPLOAD_KEY_PASSWORD=…
+```
+
+All four properties are required:
+- Use the full path, because Gradle does not expand `~` or `$HOME`.
+- With the PKCS12 keystore below, the key password is the store password.
+- A bare `NullPointerException` in `:app:signReleaseBundle` means a property is missing.
+
+To keep the passwords off disk, leave only the file and alias in `~/.gradle/gradle.properties`. Pass the passwords for one build as `ORG_GRADLE_PROJECT_SMS_UPLOAD_STORE_PASSWORD` and `ORG_GRADLE_PROJECT_SMS_UPLOAD_KEY_PASSWORD`.
+
+Create the key once, outside this repository (`prebuild --clean` deletes `android/`). keytool asks for the password:
+
+```sh
+mkdir -p -m 700 ~/.sms-signing
+keytool -genkeypair -v -keystore ~/.sms-signing/sms-upload.jks -alias sms-upload -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=SMS, O=SMS"
+```
+
+Back up the keystore away from this machine, and keep its password in a password manager rather than next to the file. If the upload key is lost or leaks, request an upload key reset in Play Console. The app keeps its updates, because Google holds the app signing key.
+
+To build:
+1. Raise `android.versionCode` in `app.json`.
+2. Run `npx expo prebuild --platform android --clean`.
+3. Run `cd android && ./gradlew bundleRelease`.
+4. Run `keytool -printcert -jarfile app/build/outputs/bundle/release/app-release.aab`. The owner must be `CN=SMS, O=SMS`. `CN=Android Debug` means the properties were not read, so do not upload that bundle. `jarsigner -verify` prints `jar verified.` for both.
+
+Before the first upload:
+- Keep Play's default Google-generated app signing key.
+- The key that signs the first bundle becomes the registered upload key, so do step 4 first.
+- Play-installed copies are signed with Google's app signing key. Add the SHA-1 and SHA-256 from Play Console's App signing page wherever a certificate is registered, for example an Android restriction on the Firebase API key.
+- Testers uninstall sideloaded QA builds before installing from Play.
+- The package name `tech.iamshoaib.sms` cannot change once the Play app exists.
+
+Without `SMS_UPLOAD_STORE_FILE`, release builds keep the template debug key. That key is public, so these builds suit only QA APKs handed directly to testers, and Play rejects them. Once the properties are set, every release build on the machine uses the upload key. Pass `-PSMS_UPLOAD_STORE_FILE=` to build a QA APK that still installs over QA6.
+
 ## Checks
 
 ```sh
@@ -42,7 +84,7 @@ npx expo-doctor
 npx expo export --platform android
 ```
 
-Tests cover homework/results/leave wire contracts, private upload validation, exact persisted mutation retries, family notification state, account boundaries, encrypted storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [SMS-mobile repository](https://github.com/shoaibhasann/SMS-mobile). App-store release/signing is not configured.
+Tests cover homework/results/leave wire contracts, private upload validation, exact persisted mutation retries, family notification state, account boundaries, encrypted storage and push lifecycle. See [engineering and founder QA](docs/MOBILE-QA.md). Test passwords and evidence live outside the repository. Source is saved on `main` in the private [SMS-mobile repository](https://github.com/shoaibhasann/SMS-mobile). Play upload signing is described in [Android release signing](#android-release-signing); no store listing or release is set up yet.
 
 ## Push activation boundary
 
